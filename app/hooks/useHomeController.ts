@@ -132,6 +132,9 @@ export function useHomeController() {
   );
   const minerGridRef = useRef<HTMLDivElement | null>(null);
   const [statusBadgesVertical, setStatusBadgesVertical] = useState(false);
+  const refreshMainRef = useRef<() => Promise<void>>(async () => {});
+  const fetchDeyeStationRef = useRef<() => Promise<void>>(async () => {});
+  const fetchTuyaDevicesRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
     setUiLang(readUiLang());
@@ -772,6 +775,10 @@ export function useHomeController() {
     await Promise.all([refreshMain(), fetchDeyeStation(), fetchTuyaDevices()]);
   };
 
+  refreshMainRef.current = refreshMain;
+  fetchDeyeStationRef.current = fetchDeyeStation;
+  fetchTuyaDevicesRef.current = fetchTuyaDevices;
+
   const openGeneralSettings = async () => {
     if (!getAuthState()) {
       router.replace("/auth");
@@ -1019,27 +1026,27 @@ export function useHomeController() {
 
   useEffect(() => {
     if (!authChecked) return;
-    void refreshMain();
+    void refreshMainRef.current();
     const id = setInterval(() => {
-      void refreshMain();
+      void refreshMainRef.current();
     }, REFRESH_MS);
     return () => clearInterval(id);
   }, [authChecked]);
 
   useEffect(() => {
     if (!authChecked) return;
-    void fetchDeyeStation();
+    void fetchDeyeStationRef.current();
     const id = setInterval(() => {
-      void fetchDeyeStation();
+      void fetchDeyeStationRef.current();
     }, DEYE_REFRESH_MS);
     return () => clearInterval(id);
   }, [authChecked]);
 
   useEffect(() => {
     if (!authChecked) return;
-    void fetchTuyaDevices();
+    void fetchTuyaDevicesRef.current();
     const id = setInterval(() => {
-      void fetchTuyaDevices();
+      void fetchTuyaDevicesRef.current();
     }, TUYA_REFRESH_MS);
     return () => clearInterval(id);
   }, [authChecked]);

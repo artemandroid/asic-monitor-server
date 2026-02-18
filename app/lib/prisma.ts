@@ -1,10 +1,11 @@
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
+import type { PrismaClient as PrismaClientType } from "@prisma/client";
 
 const require = createRequire(import.meta.url);
 
-type PrismaLike = any;
+type PrismaLike = PrismaClientType;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaLike | null };
 
@@ -20,10 +21,10 @@ function createPrismaClient(): PrismaLike | null {
       }
     }
 
-    const { PrismaClient } = require("@prisma/client") as {
+    const { PrismaClient: PrismaClientCtor } = require("@prisma/client") as {
       PrismaClient: new (options?: { log?: string[] }) => PrismaLike;
     };
-    return new PrismaClient({
+    return new PrismaClientCtor({
       log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
     });
   } catch {
