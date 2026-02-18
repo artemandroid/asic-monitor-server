@@ -11,6 +11,28 @@ type DeyeApiResponse = {
 export type DeyeStationSnapshot = {
   stationId: number;
   gridOnline: boolean | null;
+  gridStateText: string | null;
+  gridPowerKw: number | null;
+  gridSignals: {
+    source: "flag" | "text" | "power" | "charging_fallback" | "none";
+    flag: {
+      key: string | null;
+      raw: string | number | boolean | null;
+      parsed: boolean | null;
+    };
+    text: {
+      key: string | null;
+      value: string | null;
+      parsed: boolean | null;
+    };
+    power: {
+      key: string | null;
+      raw: number | null;
+      kw: number | null;
+      parsed: boolean | null;
+    };
+    chargingFallbackParsed: boolean | null;
+  };
   batterySoc: number | null;
   batteryStatus: string | null;
   batteryDischargePowerKw: number | null;
@@ -71,28 +93,41 @@ function collectCandidates(value: unknown, out: Map<string, unknown>) {
   }
 }
 
-function pickNumber(map: Map<string, unknown>, keys: string[]): number | null {
+function toPrimitive(value: unknown): string | number | boolean | null {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  return null;
+}
+
+type CandidateMatch<T> = {
+  key: string;
+  raw: unknown;
+  value: T;
+};
+
+function pickNumberMatch(map: Map<string, unknown>, keys: string[]): CandidateMatch<number> | null {
   for (const key of keys) {
     const raw = map.get(normalizeKey(key));
     const val = maybeNumber(raw);
-    if (val !== null) return val;
+    if (val !== null) return { key, raw, value: val };
   }
   return null;
 }
 
-function pickBool(map: Map<string, unknown>, keys: string[]): boolean | null {
+function pickBoolMatch(map: Map<string, unknown>, keys: string[]): CandidateMatch<boolean> | null {
   for (const key of keys) {
     const raw = map.get(normalizeKey(key));
     const val = maybeBool(raw);
-    if (val !== null) return val;
+    if (val !== null) return { key, raw, value: val };
   }
   return null;
 }
 
-function pickString(map: Map<string, unknown>, keys: string[]): string | null {
+function pickStringMatch(map: Map<string, unknown>, keys: string[]): CandidateMatch<string> | null {
   for (const key of keys) {
     const raw = map.get(normalizeKey(key));
-    if (typeof raw === "string" && raw.trim()) return raw.trim();
+    if (typeof raw === "string" && raw.trim()) return { key, raw, value: raw.trim() };
   }
   return null;
 }
@@ -136,23 +171,23 @@ function parseStationPayload(stationId: number, payload: unknown): DeyeStationSn
   const map = new Map<string, unknown>();
   collectCandidates(payload, map);
 
-  const batterySoc = pickNumber(map, [
+  const batterySoc = pickNumberMatch(map, [
     "batterySoc",
     "batteryCapacitySoc",
     "soc",
     "batteryPercent",
     "batteryLevel",
-  ]);
+  ])?.value ?? null;
 
-  const batteryPowerRaw = pickNumber(map, [
+  const batteryPowerRaw = pickNumberMatch(map, [
     "batteryDischargePower",
     "batteryPower",
     "batPower",
     "essPower",
-  ]);
+  ])?.value ?? null;
   const batteryPowerKw = toKw(batteryPowerRaw);
   const batteryStatus =
-    pickString(map, ["batteryStatus", "batteryState", "chargeStatus", "batteryMode", "workMode"]) ??
+    pickStringMatch(map, ["batteryStatus", "batteryState", "chargeStatus", "batteryMode", "workMode"])?.value ??
     (batteryPowerKw === null
       ? null
       : batteryPowerKw > 0
@@ -161,11 +196,28 @@ function parseStationPayload(stationId: number, payload: unknown): DeyeStationSn
           ? "charging"
           : "idle");
 
-  const generationPowerKw = toKw(
-    pickNumber(map, ["generationPower", "pvPower", "solarPower", "totalPvPower", "activePower"]),
-  );
+  const generationPowerKw = toKw(pickNumberMatch(map, [
+    "generationPower",
+    "pvPower",
+    "solarPower",
+    "totalPvPower",
+    "activePower",
+  ])?.value ?? null);
 
-  const gridStateText = pickString(map, [
+  const gridFlagKeys = [
+    "gridOnline",
+    "gridConnected",
+    "isGridConnected",
+    "onGrid",
+    "gridStatus",
+    "isOnGrid",
+    "lineConnected",
+    "mainsConnected",
+    "gridAvail",
+    "gridAvailable",
+    "acConnected",
+  ];
+  const gridTextKeys = [
     "gridState",
     "gridStatusText",
     "gridMode",
@@ -173,51 +225,76 @@ function parseStationPayload(stationId: number, payload: unknown): DeyeStationSn
     "mainsState",
     "acInputStatus",
     "workMode",
-  ]);
+  ];
+  const gridPowerKeys = [
+    "gridPower",
+    "gridActivePower",
+    "toGridPower",
+    "fromGridPower",
+    "gridImportPower",
+    "gridExportPower",
+    "utilityPower",
+    "linePower",
+    "mainsPower",
+    "loadFromGridPower",
+  ];
+
+  const gridFlagMatch = pickBoolMatch(map, gridFlagKeys);
+  const gridOnlineByFlag = gridFlagMatch?.value ?? null;
+
+  const gridTextMatch = pickStringMatch(map, gridTextKeys);
+  const gridStateText = gridTextMatch?.value ?? null;
   const gridOnlineByText = gridStateText ? parseGridText(gridStateText) : null;
-  const gridOnlineByPower = (() => {
-    const gridPower = pickNumber(map, [
-      "gridPower",
-      "gridActivePower",
-      "toGridPower",
-      "fromGridPower",
-      "gridImportPower",
-      "gridExportPower",
-      "utilityPower",
-      "linePower",
-      "mainsPower",
-      "loadFromGridPower",
-    ]);
-    if (gridPower === null) return null;
-    return Math.abs(gridPower) > 0.05;
-  })();
+
+  const gridPowerMatch = pickNumberMatch(map, gridPowerKeys);
+  const gridPowerRaw = gridPowerMatch?.value ?? null;
+  const gridPowerKw = toKw(gridPowerRaw);
+  const gridOnlineByPower = gridPowerRaw === null ? null : Math.abs(gridPowerRaw) > 0.05;
+
   const gridOnlineByChargingFallback =
     batteryPowerKw !== null &&
     batteryPowerKw < -0.05 &&
     (generationPowerKw === null || generationPowerKw < 0.05)
       ? true
       : null;
-  const gridOnline =
-    pickBool(map, [
-      "gridOnline",
-      "gridConnected",
-      "isGridConnected",
-      "onGrid",
-      "gridStatus",
-      "isOnGrid",
-      "lineConnected",
-      "mainsConnected",
-      "gridAvail",
-      "gridAvailable",
-      "acConnected",
-    ]) ??
-    gridOnlineByText ??
-    gridOnlineByPower ??
-    gridOnlineByChargingFallback;
+
+  const gridOnline = gridOnlineByFlag ?? gridOnlineByText ?? gridOnlineByPower ?? gridOnlineByChargingFallback;
+  const gridSignalSource =
+    gridOnlineByFlag !== null
+      ? "flag"
+      : gridOnlineByText !== null
+        ? "text"
+        : gridOnlineByPower !== null
+          ? "power"
+          : gridOnlineByChargingFallback !== null
+            ? "charging_fallback"
+            : "none";
 
   return {
     stationId,
     gridOnline,
+    gridStateText,
+    gridPowerKw,
+    gridSignals: {
+      source: gridSignalSource,
+      flag: {
+        key: gridFlagMatch?.key ?? null,
+        raw: toPrimitive(gridFlagMatch?.raw),
+        parsed: gridOnlineByFlag,
+      },
+      text: {
+        key: gridTextMatch?.key ?? null,
+        value: gridStateText,
+        parsed: gridOnlineByText,
+      },
+      power: {
+        key: gridPowerMatch?.key ?? null,
+        raw: gridPowerRaw,
+        kw: gridPowerKw,
+        parsed: gridOnlineByPower,
+      },
+      chargingFallbackParsed: gridOnlineByChargingFallback,
+    },
     batterySoc,
     batteryStatus,
     batteryDischargePowerKw: batteryPowerKw,

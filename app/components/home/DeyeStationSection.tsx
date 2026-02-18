@@ -12,6 +12,28 @@ import { t, type UiLang } from "@/app/lib/ui-lang";
 type DeyeStationSnapshot = {
   stationId: number;
   gridOnline: boolean | null;
+  gridStateText: string | null;
+  gridPowerKw: number | null;
+  gridSignals: {
+    source: "flag" | "text" | "power" | "charging_fallback" | "none";
+    flag: {
+      key: string | null;
+      raw: string | number | boolean | null;
+      parsed: boolean | null;
+    };
+    text: {
+      key: string | null;
+      value: string | null;
+      parsed: boolean | null;
+    };
+    power: {
+      key: string | null;
+      raw: number | null;
+      kw: number | null;
+      parsed: boolean | null;
+    };
+    chargingFallbackParsed: boolean | null;
+  };
   batterySoc: number | null;
   batteryStatus: string | null;
   batteryDischargePowerKw: number | null;
@@ -93,6 +115,20 @@ export function DeyeStationSection({
   formatUpdatedAt,
   onToggleCollapsed,
 }: DeyeStationSectionProps) {
+  const formatGridParsed = (value: boolean | null) =>
+    value === true ? t(uiLang, "connected") : value === false ? t(uiLang, "disconnected") : "✕";
+
+  const gridSourceLabel =
+    deyeStation?.gridSignals.source === "flag"
+      ? t(uiLang, "grid_source_flag")
+      : deyeStation?.gridSignals.source === "text"
+        ? t(uiLang, "grid_source_text")
+        : deyeStation?.gridSignals.source === "power"
+          ? t(uiLang, "grid_source_power")
+          : deyeStation?.gridSignals.source === "charging_fallback"
+            ? t(uiLang, "grid_source_charging_fallback")
+            : t(uiLang, "grid_source_none");
+
   return (
     <Paper sx={{ p: 1.25, mb: 1.25 }}>
       <Stack
@@ -179,6 +215,38 @@ export function DeyeStationSection({
             <Typography variant="body2" fontWeight={700}>
               {typeof deyeStation?.generationPowerKw === "number" ? `${deyeStation.generationPowerKw.toFixed(2)} ${kwUnit}` : "-"}
             </Typography>
+          </Grid>
+          <Grid size={{ xs: 12, md: 3 }}>
+            <Typography variant="caption" color="text.secondary">{t(uiLang, "grid_state_text")}</Typography>
+            <Typography variant="body2" fontWeight={700} noWrap title={deyeStation?.gridStateText ?? "-"}>
+              {deyeStation?.gridStateText ?? "-"}
+            </Typography>
+          </Grid>
+          <Grid size={{ xs: 12, md: 3 }}>
+            <Typography variant="caption" color="text.secondary">{t(uiLang, "grid_power")}</Typography>
+            <Typography variant="body2" fontWeight={700}>
+              {typeof deyeStation?.gridPowerKw === "number" ? `${deyeStation.gridPowerKw.toFixed(2)} ${kwUnit}` : "-"}
+            </Typography>
+          </Grid>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Typography variant="caption" color="text.secondary">{t(uiLang, "grid_detection_signals")}</Typography>
+            <Stack spacing={0.25} sx={{ mt: 0.35 }}>
+              <Typography variant="caption" color="text.secondary">
+                {t(uiLang, "source")}: {gridSourceLabel}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {t(uiLang, "flag_signal")}: {deyeStation?.gridSignals.flag.key ?? "-"} = {deyeStation?.gridSignals.flag.raw ?? "-"} → {formatGridParsed(deyeStation?.gridSignals.flag.parsed ?? null)}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {t(uiLang, "text_signal")}: {deyeStation?.gridSignals.text.key ?? "-"} = {deyeStation?.gridSignals.text.value ?? "-"} → {formatGridParsed(deyeStation?.gridSignals.text.parsed ?? null)}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {t(uiLang, "power_signal")}: {deyeStation?.gridSignals.power.key ?? "-"} = {typeof deyeStation?.gridSignals.power.raw === "number" ? deyeStation.gridSignals.power.raw.toFixed(2) : "-"} ({typeof deyeStation?.gridSignals.power.kw === "number" ? `${deyeStation.gridSignals.power.kw.toFixed(2)} ${kwUnit}` : "-"}) → {formatGridParsed(deyeStation?.gridSignals.power.parsed ?? null)}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {t(uiLang, "charging_fallback")}: {formatGridParsed(deyeStation?.gridSignals.chargingFallbackParsed ?? null)}
+              </Typography>
+            </Stack>
           </Grid>
         </Grid>
       </Collapse>

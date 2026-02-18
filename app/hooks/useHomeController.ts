@@ -52,6 +52,28 @@ type MinerSettingsPanel = {
 type DeyeStationSnapshot = {
   stationId: number;
   gridOnline: boolean | null;
+  gridStateText: string | null;
+  gridPowerKw: number | null;
+  gridSignals: {
+    source: "flag" | "text" | "power" | "charging_fallback" | "none";
+    flag: {
+      key: string | null;
+      raw: string | number | boolean | null;
+      parsed: boolean | null;
+    };
+    text: {
+      key: string | null;
+      value: string | null;
+      parsed: boolean | null;
+    };
+    power: {
+      key: string | null;
+      raw: number | null;
+      kw: number | null;
+      parsed: boolean | null;
+    };
+    chargingFallbackParsed: boolean | null;
+  };
   batterySoc: number | null;
   batteryStatus: string | null;
   batteryDischargePowerKw: number | null;
@@ -645,6 +667,15 @@ export function useHomeController() {
       setDeyeStation((prev) => ({
         stationId: prev?.stationId ?? 0,
         gridOnline: prev?.gridOnline ?? null,
+        gridStateText: prev?.gridStateText ?? null,
+        gridPowerKw: prev?.gridPowerKw ?? null,
+        gridSignals: prev?.gridSignals ?? {
+          source: "none",
+          flag: { key: null, raw: null, parsed: null },
+          text: { key: null, value: null, parsed: null },
+          power: { key: null, raw: null, kw: null, parsed: null },
+          chargingFallbackParsed: null,
+        },
         batterySoc: prev?.batterySoc ?? null,
         batteryStatus: prev?.batteryStatus ?? null,
         batteryDischargePowerKw: prev?.batteryDischargePowerKw ?? null,
