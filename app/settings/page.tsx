@@ -3,9 +3,22 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Container,
+  FormControlLabel,
+  Grid,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import { clearAuthState, getAuthState, setAuthState } from "@/app/lib/auth-client";
 import type { MinerState, Settings } from "@/app/lib/types";
-import { readUiLang, tr, type UiLang, writeUiLang } from "@/app/lib/ui-lang";
+import { readUiLang, t, type UiLang, writeUiLang } from "@/app/lib/ui-lang";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -121,205 +134,145 @@ export default function SettingsPage() {
   if (!authChecked) return null;
 
   return (
-    <div style={{ padding: 16, fontFamily: "\"IBM Plex Sans\", \"Segoe UI\", sans-serif", color: "#111827" }}>
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "10px 14px",
-          borderRadius: 12,
-          border: "1px solid #d9e0ea",
-          background: "#fff",
-          boxShadow: "0 3px 10px rgba(9, 30, 66, 0.08)",
-          marginBottom: 10,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Link href="/" style={{ textDecoration: "none", color: "#0b57d0", fontWeight: 700 }}>
-            {tr(uiLang, "← Dashboard", "← Дашборд")}
-          </Link>
-          <div style={{ fontWeight: 700 }}>{tr(uiLang, "Settings", "Налаштування")}</div>
-        </div>
-        <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-          <button
-            onClick={() => {
-              setUiLang("en");
-              writeUiLang("en");
-            }}
-            style={{ height: 28, padding: "0 10px", borderRadius: 999, border: "1px solid #cbd5e1", background: uiLang === "en" ? "#dbeafe" : "#fff", color: uiLang === "en" ? "#1d4ed8" : "#334155", fontWeight: 700 }}
-          >
-            EN
-          </button>
-          <button
-            onClick={() => {
-              setUiLang("uk");
-              writeUiLang("uk");
-            }}
-            style={{ height: 28, padding: "0 10px", borderRadius: 999, border: "1px solid #cbd5e1", background: uiLang === "uk" ? "#dbeafe" : "#fff", color: uiLang === "uk" ? "#1d4ed8" : "#334155", fontWeight: 700 }}
-          >
-            UA
-          </button>
-        <button
-          onClick={async () => {
-            try {
-              await fetch("/api/auth/logout", { method: "POST" });
-            } catch {
-              // ignore network errors on logout
-            }
-            clearAuthState();
-            router.replace("/auth");
-          }}
-          style={{
-            height: 32,
-            padding: "0 12px",
-            borderRadius: 8,
-            border: "1px solid #f0c5c5",
-            background: "#fff5f5",
-            color: "#9a3412",
-            fontWeight: 700,
-          }}
-        >
-          {tr(uiLang, "Logout", "Вийти")}
-        </button>
-        </div>
-      </header>
+    <Container maxWidth={false} sx={{ p: 2 }}>
+      <Paper sx={{ p: 1.5, mb: 1.25 }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
+          <Stack direction="row" spacing={1.25} alignItems="center">
+            <Button component={Link} href="/" variant="outlined" color="primary">
+              {t(uiLang, "dashboard")}
+            </Button>
+            <Typography variant="subtitle1" fontWeight={800}>{t(uiLang, "settings")}</Typography>
+          </Stack>
+
+          <Stack direction="row" spacing={0.75} alignItems="center">
+            <Button
+              size="small"
+              variant={uiLang === "en" ? "contained" : "outlined"}
+              onClick={() => {
+                setUiLang("en");
+                writeUiLang("en");
+              }}
+            >
+              EN
+            </Button>
+            <Button
+              size="small"
+              variant={uiLang === "uk" ? "contained" : "outlined"}
+              onClick={() => {
+                setUiLang("uk");
+                writeUiLang("uk");
+              }}
+            >
+              UA
+            </Button>
+            <Button
+              variant="outlined"
+              color="error"
+              onClick={async () => {
+                try {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                } catch {
+                  // ignore network errors on logout
+                }
+                clearAuthState();
+                router.replace("/auth");
+              }}
+            >
+              {t(uiLang, "logout")}
+            </Button>
+          </Stack>
+        </Stack>
+      </Paper>
 
       {error && (
-        <div
-          style={{
-            border: "1px solid #fecaca",
-            background: "#fff1f2",
-            color: "#9f1239",
-            borderRadius: 8,
-            padding: "8px 10px",
-            marginBottom: 10,
-            fontSize: 13,
-            fontWeight: 600,
-          }}
-        >
+        <Alert severity="error" variant="outlined" sx={{ mb: 1.25 }}>
           {error}
-        </div>
+        </Alert>
       )}
 
-      <div style={{ display: "grid", gap: 10, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)" }}>
-        <section style={{ border: "1px solid #d6dce7", borderRadius: 10, background: "#fff", padding: 12 }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>{tr(uiLang, "General Alerts", "Загальні сповіщення")}</div>
-          {!settings ? (
-            <div style={{ color: "#475569", fontSize: 13 }}>{tr(uiLang, "Loading...", "Завантаження...")}</div>
-          ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              <label style={{ display: "grid", gap: 4 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>
-                  {tr(uiLang, "Prompt Cooldown (minutes)", "Пауза між підказками (хв)")}
-                </span>
-                <input
+      <Grid container spacing={1.25}>
+        <Grid size={{ xs: 12, lg: 6 }}>
+          <Paper sx={{ p: 1.5 }}>
+            <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1 }}>
+              {t(uiLang, "general_alerts")}
+            </Typography>
+
+            {!settings ? (
+              <Typography variant="body2" color="text.secondary">
+                {t(uiLang, "loading")}
+              </Typography>
+            ) : (
+              <Stack spacing={1.1}>
+                <TextField
                   type="number"
+                  label={t(uiLang, "prompt_cooldown_minutes")}
                   value={restartDelayMinutes}
                   onChange={(e) => setRestartDelayMinutes(e.target.value)}
-                  style={{ height: 34, borderRadius: 8, border: "1px solid #cbd5e1", padding: "0 10px" }}
                 />
-              </label>
-              <label style={{ display: "grid", gap: 4 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>
-                  {tr(uiLang, "Deviation (legacy, %)", "Відхилення (legacy, %)")}
-                </span>
-                <input
+                <TextField
                   type="number"
-                  step="0.1"
+                  label={t(uiLang, "deviation_legacy_percent")}
+                  inputProps={{ step: "0.1" }}
                   value={hashrateDeviationPercent}
                   onChange={(e) => setHashrateDeviationPercent(e.target.value)}
-                  style={{ height: 34, borderRadius: 8, border: "1px solid #cbd5e1", padding: "0 10px" }}
                 />
-              </label>
-              <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 600 }}>
-                <input
-                  type="checkbox"
-                  checked={notifyAutoRestart}
-                  onChange={(e) => setNotifyAutoRestart(e.target.checked)}
+                <FormControlLabel
+                  control={<Checkbox checked={notifyAutoRestart} onChange={(e) => setNotifyAutoRestart(e.target.checked)} />}
+                  label={t(uiLang, "notify_when_auto_restart_executed")}
                 />
-                {tr(uiLang, "Notify when auto-restart executed", "Сповіщати про авто-рестарт")}
-              </label>
-              <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 600 }}>
-                <input
-                  type="checkbox"
-                  checked={notifyRestartPrompt}
-                  onChange={(e) => setNotifyRestartPrompt(e.target.checked)}
+                <FormControlLabel
+                  control={<Checkbox checked={notifyRestartPrompt} onChange={(e) => setNotifyRestartPrompt(e.target.checked)} />}
+                  label={t(uiLang, "notify_when_low_hashrate_and_auto_restart_off")}
                 />
-                {tr(uiLang, "Notify when low hashrate and auto-restart OFF", "Сповіщати про низький хешрейт коли авто-рестарт вимкнено")}
-              </label>
-              <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-                <button
-                  onClick={saveGeneral}
-                  disabled={saving}
-                  style={{
-                    height: 32,
-                    padding: "0 12px",
-                    borderRadius: 999,
-                    border: "1px solid #bfdbfe",
-                    background: "#0b57d0",
-                    color: "#fff",
-                    fontWeight: 700,
-                  }}
-                >
-                  {saving ? tr(uiLang, "Saving...", "Збереження...") : tr(uiLang, "Save", "Зберегти")}
-                </button>
-                <button
-                  onClick={fetchData}
-                  disabled={saving}
-                  style={{
-                    height: 32,
-                    padding: "0 12px",
-                    borderRadius: 999,
-                    border: "1px solid #cbd5e1",
-                    background: "#fff",
-                    color: "#334155",
-                    fontWeight: 700,
-                  }}
-                >
-                  {tr(uiLang, "Reload", "Оновити")}
-                </button>
-              </div>
-            </div>
-          )}
-        </section>
 
-        <section style={{ border: "1px solid #d6dce7", borderRadius: 10, background: "#fff", padding: 12 }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>{tr(uiLang, "Per-Miner Auto-Restart", "Авто-рестарт по кожному майнеру")}</div>
-          <div style={{ display: "grid", gap: 6, maxHeight: 420, overflow: "auto" }}>
-            {miners.map((miner) => (
-              <Link
-                key={miner.minerId}
-                href={`/settings/miner/${encodeURIComponent(miner.minerId)}`}
-                style={{
-                  textDecoration: "none",
-                  color: "#0f172a",
-                  border: "1px solid #dbe2ee",
-                  borderRadius: 8,
-                  padding: "8px 10px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 8,
-                  background: "#f8fafc",
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{miner.minerId}</div>
-                  <div style={{ fontSize: 12, color: "#475569" }}>
-                    {tr(uiLang, "Auto", "Авто")}: {miner.autoRestartEnabled ? "ON" : "OFF"} · {tr(uiLang, "Threshold", "Поріг")}:{" "}
-                    {typeof miner.lowHashrateThresholdGh === "number"
-                      ? `${miner.lowHashrateThresholdGh} GH/s`
-                      : "-"}
-                  </div>
-                </div>
-                <div style={{ fontWeight: 700, color: "#0b57d0" }}>{tr(uiLang, "Open →", "Відкрити →")}</div>
-              </Link>
-            ))}
-            {miners.length === 0 && <div style={{ color: "#475569", fontSize: 13 }}>{tr(uiLang, "No miners yet.", "Ще немає майнерів.")}</div>}
-          </div>
-        </section>
-      </div>
-    </div>
+                <Stack direction="row" spacing={0.8}>
+                  <Button onClick={saveGeneral} disabled={saving}>
+                    {saving ? t(uiLang, "saving") : t(uiLang, "save")}
+                  </Button>
+                  <Button variant="outlined" color="inherit" onClick={fetchData} disabled={saving}>
+                    {t(uiLang, "reload")}
+                  </Button>
+                </Stack>
+              </Stack>
+            )}
+          </Paper>
+        </Grid>
+
+        <Grid size={{ xs: 12, lg: 6 }}>
+          <Paper sx={{ p: 1.5 }}>
+            <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1 }}>
+              {t(uiLang, "per_miner_auto_restart")}
+            </Typography>
+            <Stack spacing={0.8} sx={{ maxHeight: 460, overflow: "auto" }}>
+              {miners.map((miner) => (
+                <Paper
+                  key={miner.minerId}
+                  variant="outlined"
+                  sx={{ p: 1.1, borderRadius: 2, "&:hover": { borderColor: "primary.main" } }}
+                  component={Link}
+                  href={`/settings/miner/${encodeURIComponent(miner.minerId)}`}
+                >
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1}>
+                    <Box>
+                      <Typography variant="body2" fontWeight={800}>{miner.minerId}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {t(uiLang, "auto")}: {miner.autoRestartEnabled ? "ON" : "OFF"} · {t(uiLang, "threshold")}: {typeof miner.lowHashrateThresholdGh === "number" ? `${miner.lowHashrateThresholdGh} GH/s` : "-"}
+                      </Typography>
+                    </Box>
+                    <Typography variant="body2" color="primary.main" fontWeight={800}>{t(uiLang, "open")}</Typography>
+                  </Stack>
+                </Paper>
+              ))}
+
+              {miners.length === 0 && (
+                <Typography variant="body2" color="text.secondary">
+                  {t(uiLang, "no_miners_yet")}
+                </Typography>
+              )}
+            </Stack>
+          </Paper>
+        </Grid>
+      </Grid>
+    </Container>
   );
 }

@@ -1,8 +1,10 @@
 {
   "allowedEmails": [
-    "moroz.artem.ua@gmail.com"
+    "moroz.artem.ua@gmail.com",
+    "aquamarine21q@gmail.com"
   ],
   "minerAccess": {
-    "moroz.artem.ua@gmail.com": ["192.168.1.105", "192.168.1.134", "192.168.1.86"]
+    "moroz.artem.ua@gmail.com": ["192.168.1.105", "192.168.1.134", "192.168.1.86"],
+    "aquamarine21q@gmail.com": ["192.168.1.105", "192.168.1.134", "192.168.1.86"]
   }
 }

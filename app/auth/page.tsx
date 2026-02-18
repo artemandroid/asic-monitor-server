@@ -2,8 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Container,
+  FormControlLabel,
+  Paper,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { getAuthState, setAuthState } from "@/app/lib/auth-client";
-import { readUiLang, tr, type UiLang, writeUiLang } from "@/app/lib/ui-lang";
+import { readUiLang, t, type UiLang, writeUiLang } from "@/app/lib/ui-lang";
 
 declare global {
   interface Window {
@@ -150,101 +161,73 @@ export default function AuthPage() {
   if (!checked) return null;
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "linear-gradient(135deg, #f8f3ea 0%, #f5f8f3 100%)",
-        fontFamily: '"IBM Plex Sans", "Segoe UI", sans-serif',
-      }}
-    >
-      <div
-        style={{
-          width: "min(460px, 92vw)",
-          background: "white",
-          borderRadius: 16,
-          padding: 28,
-          border: "1px solid #e7e2d8",
-          boxShadow: "0 20px 50px rgba(0,0,0,0.08)",
-          display: "grid",
-          gap: 12,
+    <Container maxWidth="sm" sx={{ minHeight: "100vh", display: "grid", placeItems: "center", py: 4 }}>
+      <Paper
+        elevation={0}
+        sx={{
+          width: "100%",
+          p: 3,
+          borderRadius: 3,
+          background: "linear-gradient(180deg, rgba(17,26,45,0.96) 0%, rgba(17,26,45,0.84) 100%)",
         }}
       >
-        <h1 style={{ margin: 0 }}>{tr(uiLang, "Mining Control", "Майнинг Контроль")}</h1>
-        <p style={{ margin: 0, color: "#1f2937", fontSize: 14 }}>
-          {tr(uiLang, "Login with your allowed Google email.", "Увійдіть через дозволену Google-пошту.")}
-        </p>
-        <div style={{ display: "inline-flex", gap: 6 }}>
-          <button
-            onClick={() => {
-              setUiLang("en");
-              writeUiLang("en");
-            }}
-            style={{
-              height: 28,
-              padding: "0 10px",
-              borderRadius: 999,
-              border: "1px solid #cbd5e1",
-              background: uiLang === "en" ? "#dbeafe" : "#fff",
-              color: uiLang === "en" ? "#1d4ed8" : "#334155",
-              fontWeight: 700,
-            }}
-          >
-            EN
-          </button>
-          <button
-            onClick={() => {
-              setUiLang("uk");
-              writeUiLang("uk");
-            }}
-            style={{
-              height: 28,
-              padding: "0 10px",
-              borderRadius: 999,
-              border: "1px solid #cbd5e1",
-              background: uiLang === "uk" ? "#dbeafe" : "#fff",
-              color: uiLang === "uk" ? "#1d4ed8" : "#334155",
-              fontWeight: 700,
-            }}
-          >
-            UA
-          </button>
-        </div>
+        <Stack spacing={1.5}>
+          <Typography variant="h4" fontWeight={900}>{t(uiLang, "mining_control")}</Typography>
+          <Typography variant="body2" color="text.secondary">
+            {t(uiLang, "login_with_your_allowed_google_email")}
+          </Typography>
 
-        <label style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 4 }}>
-          <input
-            type="checkbox"
-            checked={keepLoggedIn}
-            onChange={(e) => setKeepLoggedIn(e.target.checked)}
-            disabled={loggingIn}
+          <Stack direction="row" spacing={0.75}>
+            <Button
+              variant={uiLang === "en" ? "contained" : "outlined"}
+              color="primary"
+              size="small"
+              onClick={() => {
+                setUiLang("en");
+                writeUiLang("en");
+              }}
+            >
+              EN
+            </Button>
+            <Button
+              variant={uiLang === "uk" ? "contained" : "outlined"}
+              color="primary"
+              size="small"
+              onClick={() => {
+                setUiLang("uk");
+                writeUiLang("uk");
+              }}
+            >
+              UA
+            </Button>
+          </Stack>
+
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={keepLoggedIn}
+                onChange={(e) => setKeepLoggedIn(e.target.checked)}
+                disabled={loggingIn}
+              />
+            }
+            label={t(uiLang, "keep_me_logged_in")}
           />
-          <span style={{ color: "#111827" }}>{tr(uiLang, "Keep me logged in", "Запам'ятати вхід")}</span>
-        </label>
 
-        <div ref={buttonRef} style={{ minHeight: 44 }} />
+          <Box ref={buttonRef} sx={{ minHeight: 44 }} />
 
-        {loggingIn && (
-          <div style={{ color: "#374151", fontSize: 13 }}>
-            {tr(uiLang, "Signing in...", "Виконується вхід...")}
-          </div>
-        )}
-        {error && (
-          <div
-            style={{
-              border: "1px solid #fecaca",
-              background: "#fff1f2",
-              color: "#9f1239",
-              borderRadius: 8,
-              padding: "8px 10px",
-              fontSize: 13,
-              fontWeight: 600,
-            }}
-          >
-            {error}
-          </div>
-        )}
-      </div>
-    </div>
+          {loggingIn && (
+            <Typography variant="body2" color="text.secondary">
+              {t(uiLang, "signing_in")}
+            </Typography>
+          )}
+
+          {error && (
+            <Alert severity="error" variant="outlined">
+              {error}
+            </Alert>
+          )}
+        </Stack>
+      </Paper>
+    </Container>
   );
 }
