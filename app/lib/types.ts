@@ -4,6 +4,21 @@ export type MinerMetric = {
   hashrate?: number;
   temp?: number;
   fan?: number;
+  fanSpeeds?: number[];
+  boardTemps?: number[];
+  boardInletTemps?: number[];
+  boardOutletTemps?: number[];
+  boardHashrates?: number[];
+  boardTheoreticalHashrates?: number[];
+  boardFreqs?: number[];
+  boardHwErrors?: number[];
+  boardChips?: number[];
+  boardStates?: string[];
+  statesOk?: boolean;
+  hashrateRealtime?: number;
+  hashrateAverage?: number;
+  runtimeSeconds?: number;
+  poolRejectionRate?: number;
   ip?: string;
   asicType?: string;
   firmware?: string;
@@ -17,6 +32,23 @@ export type MinerMetric = {
 export type MinerState = {
   minerId: string;
   lastSeen: string | null;
+  lastRestartAt?: string | null;
+  pendingCommandType?: CommandType | null;
+  autoRestartEnabled?: boolean;
+  postRestartGraceMinutes?: number;
+  lowHashrateThresholdGh?: number | null;
+  autoPowerOnGridRestore?: boolean;
+  autoPowerOffGridLoss?: boolean;
+  boundTuyaDeviceId?: string | null;
+  autoPowerOffGenerationBelowKw?: number | null;
+  autoPowerOffBatteryBelowPercent?: number | null;
+  autoPowerRestoreDelayMinutes?: number;
+  overheatProtectionEnabled?: boolean;
+  overheatShutdownTempC?: number | null;
+  overheatLocked?: boolean;
+  overheatLockedAt?: string | null;
+  overheatLastTempC?: number | null;
+  expectedHashrate?: number;
   lastMetric: MinerMetric | null;
 };
 
@@ -36,9 +68,12 @@ export type Command = {
 export type Settings = {
   autoRestartEnabled: boolean;
   restartDelayMinutes: number;
+  postRestartGraceMinutes: number;
+  lowHashrateThresholdGh: number;
   hashrateDeviationPercent: number;
   notifyAutoRestart: boolean;
   notifyRestartPrompt: boolean;
+  notificationVisibleCount: number;
 };
 
 export type Notification = {

@@ -9,7 +9,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -20,6 +20,20 @@ model Miner {
   firmware            String?
   authType            String?
   expectedHashrate    Float?
+  autoRestartEnabled  Boolean  @default(false)
+  postRestartGraceMinutes Int  @default(10)
+  lowHashrateThresholdGh Float?
+  autoPowerOnGridRestore Boolean @default(false)
+  autoPowerOffGridLoss Boolean @default(false)
+  boundTuyaDeviceId     String?
+  autoPowerOffGenerationBelowKw Float?
+  autoPowerOffBatteryBelowPercent Float?
+  autoPowerRestoreDelayMinutes Int @default(10)
+  overheatProtectionEnabled Boolean @default(true)
+  overheatShutdownTempC Float @default(84)
+  overheatLocked Boolean @default(false)
+  overheatLockedAt DateTime?
+  overheatLastTempC Float?
   lastSeen            DateTime?
   online              Boolean?
   readStatus          String?
@@ -46,9 +60,12 @@ model Settings {
   id                       Int      @id @default(1)
   autoRestartEnabled       Boolean  @default(true)
   restartDelayMinutes      Int      @default(10)
+  postRestartGraceMinutes  Int      @default(10)
+  lowHashrateThresholdGh   Float    @default(10)
   hashrateDeviationPercent Float    @default(10)
   notifyAutoRestart        Boolean  @default(true)
   notifyRestartPrompt      Boolean  @default(true)
+  notificationVisibleCount Int      @default(2)
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import type { CommandStatus } from "@/app/lib/types";
 import { prisma } from "@/app/lib/prisma";
+import { commands } from "@/app/lib/store";
 
 type ResultBody = {
   id?: string;
@@ -26,21 +27,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
 
-  const command = await prisma.command.findUnique({
-    where: { id: body.id },
-  });
-  if (!command) {
-    return NextResponse.json({ error: "Command not found" }, { status: 404 });
-  }
+  try {
+    const command = await prisma.command.findUnique({
+      where: { id: body.id },
+    });
+    if (!command) {
+      return NextResponse.json({ error: "Command not found" }, { status: 404 });
+    }
 
-  await prisma.command.update({
-    where: { id: body.id },
-    data: {
+    await prisma.command.update({
+      where: { id: body.id },
+      data: {
+        status: body.status,
+        executedAt: new Date(),
+        error: body.error ?? undefined,
+      },
+    });
+  } catch {
+    const idx = commands.findIndex((c) => c.id === body.id);
+    if (idx < 0) {
+      return NextResponse.json({ error: "Command not found" }, { status: 404 });
+    }
+    commands[idx] = {
+      ...commands[idx],
       status: body.status,
-      executedAt: new Date(),
-      error: body.error ?? undefined,
-    },
-  });
+      executedAt: new Date().toISOString(),
+      error: body.error,
+    };
+  }
 
   return NextResponse.json({ ok: true });
 }

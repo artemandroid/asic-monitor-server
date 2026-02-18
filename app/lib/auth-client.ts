@@ -1,19 +1,19 @@
 "use client";
 
 type AuthState = {
-  token: string;
+  email: string;
   expiresAt: number;
 };
 
 const LOCAL_KEY = "mc_auth";
 const SESSION_KEY = "mc_auth_session";
 
-const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
-const PERSIST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
 function readStore(key: string): AuthState | null {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key);
+  const raw =
+    key === LOCAL_KEY
+      ? window.localStorage.getItem(key)
+      : window.sessionStorage.getItem(key);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as AuthState;
@@ -47,18 +47,21 @@ export function getAuthState(): AuthState | null {
   return state;
 }
 
-export function setAuthState(keepLoggedIn: boolean) {
+export function setAuthState(
+  state: { email: string; expiresAt: number },
+  keepLoggedIn: boolean,
+) {
   if (typeof window === "undefined") return;
-  const token = crypto.randomUUID();
-  const expiresAt =
-    Date.now() + (keepLoggedIn ? PERSIST_TTL_MS : SESSION_TTL_MS);
-  const state: AuthState = { token, expiresAt };
+  const payload: AuthState = {
+    email: state.email.trim().toLowerCase(),
+    expiresAt: state.expiresAt,
+  };
 
   if (keepLoggedIn) {
-    writeStore(LOCAL_KEY, state, true);
+    writeStore(LOCAL_KEY, payload, true);
     window.sessionStorage.removeItem(SESSION_KEY);
   } else {
-    writeStore(SESSION_KEY, state, false);
+    writeStore(SESSION_KEY, payload, false);
     window.localStorage.removeItem(LOCAL_KEY);
   }
 }

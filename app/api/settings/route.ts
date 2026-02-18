@@ -1,19 +1,27 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getSettings, updateSettings } from "@/app/lib/settings";
+import { requireWebAuth } from "@/app/lib/web-auth";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = requireWebAuth(request);
+  if (auth instanceof NextResponse) return auth;
   const settings = await getSettings();
   return NextResponse.json({
     autoRestartEnabled: settings.autoRestartEnabled,
     restartDelayMinutes: settings.restartDelayMinutes,
+    postRestartGraceMinutes: settings.postRestartGraceMinutes,
+    lowHashrateThresholdGh: settings.lowHashrateThresholdGh,
     hashrateDeviationPercent: settings.hashrateDeviationPercent,
     notifyAutoRestart: settings.notifyAutoRestart,
     notifyRestartPrompt: settings.notifyRestartPrompt,
+    notificationVisibleCount: settings.notificationVisibleCount,
   });
 }
 
 export async function PUT(request: NextRequest) {
+  const auth = requireWebAuth(request);
+  if (auth instanceof NextResponse) return auth;
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -24,9 +32,12 @@ export async function PUT(request: NextRequest) {
   const payload: {
     autoRestartEnabled?: boolean;
     restartDelayMinutes?: number;
+    postRestartGraceMinutes?: number;
+    lowHashrateThresholdGh?: number;
     hashrateDeviationPercent?: number;
     notifyAutoRestart?: boolean;
     notifyRestartPrompt?: boolean;
+    notificationVisibleCount?: number;
   } = {};
 
   if (typeof body.autoRestartEnabled === "boolean") {
@@ -38,6 +49,20 @@ export async function PUT(request: NextRequest) {
     body.restartDelayMinutes >= 0
   ) {
     payload.restartDelayMinutes = Math.floor(body.restartDelayMinutes);
+  }
+  if (
+    typeof body.postRestartGraceMinutes === "number" &&
+    Number.isFinite(body.postRestartGraceMinutes) &&
+    body.postRestartGraceMinutes >= 0
+  ) {
+    payload.postRestartGraceMinutes = Math.floor(body.postRestartGraceMinutes);
+  }
+  if (
+    typeof body.lowHashrateThresholdGh === "number" &&
+    Number.isFinite(body.lowHashrateThresholdGh) &&
+    body.lowHashrateThresholdGh >= 0
+  ) {
+    payload.lowHashrateThresholdGh = body.lowHashrateThresholdGh;
   }
   if (
     typeof body.hashrateDeviationPercent === "number" &&
@@ -52,13 +77,23 @@ export async function PUT(request: NextRequest) {
   if (typeof body.notifyRestartPrompt === "boolean") {
     payload.notifyRestartPrompt = body.notifyRestartPrompt;
   }
+  if (
+    typeof body.notificationVisibleCount === "number" &&
+    Number.isFinite(body.notificationVisibleCount) &&
+    body.notificationVisibleCount >= 1
+  ) {
+    payload.notificationVisibleCount = Math.floor(body.notificationVisibleCount);
+  }
 
   const updated = await updateSettings(payload);
   return NextResponse.json({
     autoRestartEnabled: updated.autoRestartEnabled,
     restartDelayMinutes: updated.restartDelayMinutes,
+    postRestartGraceMinutes: updated.postRestartGraceMinutes,
+    lowHashrateThresholdGh: updated.lowHashrateThresholdGh,
     hashrateDeviationPercent: updated.hashrateDeviationPercent,
     notifyAutoRestart: updated.notifyAutoRestart,
     notifyRestartPrompt: updated.notifyRestartPrompt,
+    notificationVisibleCount: updated.notificationVisibleCount,
   });
 }
