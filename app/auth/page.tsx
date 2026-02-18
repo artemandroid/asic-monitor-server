@@ -168,7 +168,7 @@ export default function AuthPage() {
           width: "100%",
           p: 3,
           borderRadius: 3,
-          background: "linear-gradient(180deg, rgba(17,26,45,0.96) 0%, rgba(17,26,45,0.84) 100%)",
+          background: "linear-gradient(180deg, rgba(27,30,35,0.96) 0%, rgba(23,26,30,0.88) 100%)",
         }}
       >
         <Stack spacing={1.5}>

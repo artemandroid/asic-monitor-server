@@ -4,15 +4,17 @@ export const appTheme = createTheme({
   palette: {
     mode: "dark",
     primary: {
-      main: "#4f8cff",
+      main: "#6b7280",
+      contrastText: "#f8fafc",
     },
     secondary: {
-      main: "#22d3ee",
+      main: "#9ca3af",
     },
     background: {
-      default: "#0b1220",
-      paper: "#111a2d",
+      default: "#0f1113",
+      paper: "#171a1e",
     },
+    divider: "rgba(148, 163, 184, 0.24)",
     success: {
       main: "#34d399",
     },

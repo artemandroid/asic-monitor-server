@@ -116,7 +116,14 @@ export function DeyeStationSection({
   onToggleCollapsed,
 }: DeyeStationSectionProps) {
   const formatGridParsed = (value: boolean | null) =>
-    value === true ? t(uiLang, "connected") : value === false ? t(uiLang, "disconnected") : "✕";
+    value === true ? t(uiLang, "connected") : value === false ? t(uiLang, "disconnected") : t(uiLang, "unknown");
+
+  const gridStatusLabel = formatGridParsed(deyeStation?.gridOnline ?? null);
+  const gridStatusColor = deyeStation?.gridOnline === true
+    ? "success"
+    : deyeStation?.gridOnline === false
+      ? "error"
+      : "default";
 
   const gridSourceLabel =
     deyeStation?.gridSignals.source === "flag"
@@ -147,9 +154,9 @@ export function DeyeStationSection({
           {deyeCollapsed && (
             <Stack direction="row" spacing={1} alignItems="center" minWidth={0}>
               <Chip
-                label={deyeStation?.gridOnline === true ? t(uiLang, "connected") : t(uiLang, "disconnected")}
+                label={gridStatusLabel}
                 size="small"
-                color={deyeStation?.gridOnline === true ? "success" : "error"}
+                color={gridStatusColor}
                 variant="outlined"
               />
               {batteryModeLabel ? (
@@ -185,11 +192,7 @@ export function DeyeStationSection({
           <Grid size={{ xs: 12, md: 3 }}>
             <Typography variant="caption" color="text.secondary">{t(uiLang, "grid")}</Typography>
             <Typography variant="body2" fontWeight={700}>
-              {deyeStation?.gridOnline === true
-                ? t(uiLang, "connected")
-                : deyeStation?.gridOnline === false
-                  ? t(uiLang, "disconnected")
-                  : "✕"}
+              {gridStatusLabel}
             </Typography>
           </Grid>
           <Grid size={{ xs: 12, md: 3 }}>

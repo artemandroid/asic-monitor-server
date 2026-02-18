@@ -50,7 +50,7 @@ export function HomeHeader({
         alignItems: "center",
         justifyContent: "space-between",
         gap: 2,
-        background: "linear-gradient(180deg, rgba(17,26,45,0.96) 0%, rgba(17,26,45,0.84) 100%)",
+        background: "linear-gradient(180deg, rgba(27,30,35,0.96) 0%, rgba(23,26,30,0.88) 100%)",
       }}
     >
       <Stack direction="row" spacing={1.5} alignItems="center">
@@ -59,13 +59,13 @@ export function HomeHeader({
             px: 1.5,
             py: 0.7,
             borderRadius: 2,
-            background: "linear-gradient(135deg, #4f8cff 0%, #2563eb 100%)",
+            background: "linear-gradient(135deg, #6b7280 0%, #4b5563 100%)",
             color: "white",
             fontWeight: 800,
             fontSize: 13,
             letterSpacing: 0.3,
             whiteSpace: "nowrap",
-            boxShadow: "0 8px 24px rgba(37, 99, 235, 0.35)",
+            boxShadow: "0 8px 24px rgba(75, 85, 99, 0.35)",
           }}
         >
           {t(uiLang, "mining_control")}
