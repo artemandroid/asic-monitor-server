@@ -9,6 +9,9 @@ export async function GET(request: NextRequest) {
   const settings = await getSettings();
   return NextResponse.json({
     autoRestartEnabled: settings.autoRestartEnabled,
+    minerSyncIntervalSec: settings.minerSyncIntervalSec,
+    deyeSyncIntervalSec: settings.deyeSyncIntervalSec,
+    tuyaSyncIntervalSec: settings.tuyaSyncIntervalSec,
     restartDelayMinutes: settings.restartDelayMinutes,
     postRestartGraceMinutes: settings.postRestartGraceMinutes,
     lowHashrateThresholdGh: settings.lowHashrateThresholdGh,
@@ -16,6 +19,7 @@ export async function GET(request: NextRequest) {
     notifyAutoRestart: settings.notifyAutoRestart,
     notifyRestartPrompt: settings.notifyRestartPrompt,
     notificationVisibleCount: settings.notificationVisibleCount,
+    criticalBatteryOffPercent: settings.criticalBatteryOffPercent,
   });
 }
 
@@ -31,6 +35,9 @@ export async function PUT(request: NextRequest) {
 
   const payload: {
     autoRestartEnabled?: boolean;
+    minerSyncIntervalSec?: number;
+    deyeSyncIntervalSec?: number;
+    tuyaSyncIntervalSec?: number;
     restartDelayMinutes?: number;
     postRestartGraceMinutes?: number;
     lowHashrateThresholdGh?: number;
@@ -38,10 +45,35 @@ export async function PUT(request: NextRequest) {
     notifyAutoRestart?: boolean;
     notifyRestartPrompt?: boolean;
     notificationVisibleCount?: number;
+    criticalBatteryOffPercent?: number;
   } = {};
 
   if (typeof body.autoRestartEnabled === "boolean") {
     payload.autoRestartEnabled = body.autoRestartEnabled;
+  }
+  if (
+    typeof body.minerSyncIntervalSec === "number" &&
+    Number.isFinite(body.minerSyncIntervalSec) &&
+    body.minerSyncIntervalSec >= 5 &&
+    body.minerSyncIntervalSec <= 3600
+  ) {
+    payload.minerSyncIntervalSec = Math.floor(body.minerSyncIntervalSec);
+  }
+  if (
+    typeof body.deyeSyncIntervalSec === "number" &&
+    Number.isFinite(body.deyeSyncIntervalSec) &&
+    body.deyeSyncIntervalSec >= 5 &&
+    body.deyeSyncIntervalSec <= 3600
+  ) {
+    payload.deyeSyncIntervalSec = Math.floor(body.deyeSyncIntervalSec);
+  }
+  if (
+    typeof body.tuyaSyncIntervalSec === "number" &&
+    Number.isFinite(body.tuyaSyncIntervalSec) &&
+    body.tuyaSyncIntervalSec >= 5 &&
+    body.tuyaSyncIntervalSec <= 3600
+  ) {
+    payload.tuyaSyncIntervalSec = Math.floor(body.tuyaSyncIntervalSec);
   }
   if (
     typeof body.restartDelayMinutes === "number" &&
@@ -84,10 +116,21 @@ export async function PUT(request: NextRequest) {
   ) {
     payload.notificationVisibleCount = Math.floor(body.notificationVisibleCount);
   }
+  if (
+    typeof body.criticalBatteryOffPercent === "number" &&
+    Number.isFinite(body.criticalBatteryOffPercent) &&
+    body.criticalBatteryOffPercent >= 0 &&
+    body.criticalBatteryOffPercent <= 100
+  ) {
+    payload.criticalBatteryOffPercent = body.criticalBatteryOffPercent;
+  }
 
   const updated = await updateSettings(payload);
   return NextResponse.json({
     autoRestartEnabled: updated.autoRestartEnabled,
+    minerSyncIntervalSec: updated.minerSyncIntervalSec,
+    deyeSyncIntervalSec: updated.deyeSyncIntervalSec,
+    tuyaSyncIntervalSec: updated.tuyaSyncIntervalSec,
     restartDelayMinutes: updated.restartDelayMinutes,
     postRestartGraceMinutes: updated.postRestartGraceMinutes,
     lowHashrateThresholdGh: updated.lowHashrateThresholdGh,
@@ -95,5 +138,6 @@ export async function PUT(request: NextRequest) {
     notifyAutoRestart: updated.notifyAutoRestart,
     notifyRestartPrompt: updated.notifyRestartPrompt,
     notificationVisibleCount: updated.notificationVisibleCount,
+    criticalBatteryOffPercent: updated.criticalBatteryOffPercent,
   });
 }

@@ -42,7 +42,9 @@ export async function GET(request: NextRequest) {
       autoPowerOffGridLoss: boolean;
       boundTuyaDeviceId: string | null;
       autoPowerOffGenerationBelowKw: number | null;
+      autoPowerOnGenerationAboveKw: number | null;
       autoPowerOffBatteryBelowPercent: number | null;
+      autoPowerOnBatteryAbovePercent: number | null;
       autoPowerRestoreDelayMinutes: number;
       overheatProtectionEnabled: boolean;
       overheatShutdownTempC: number | null;
@@ -63,7 +65,10 @@ export async function GET(request: NextRequest) {
       autoPowerOffGridLoss: miner.autoPowerOffGridLoss,
       boundTuyaDeviceId: miner.boundTuyaDeviceId ?? null,
       autoPowerOffGenerationBelowKw: miner.autoPowerOffGenerationBelowKw,
+      autoPowerOnGenerationAboveKw: miner.autoPowerOnGenerationAboveKw,
       autoPowerOffBatteryBelowPercent: miner.autoPowerOffBatteryBelowPercent,
+      autoPowerOnBatteryAbovePercent:
+        miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes,
       overheatProtectionEnabled: miner.overheatProtectionEnabled,
       overheatShutdownTempC: miner.overheatShutdownTempC,
@@ -98,7 +103,10 @@ export async function GET(request: NextRequest) {
         autoPowerOffGridLoss: miner.autoPowerOffGridLoss ?? false,
         boundTuyaDeviceId: miner.boundTuyaDeviceId ?? null,
         autoPowerOffGenerationBelowKw: miner.autoPowerOffGenerationBelowKw ?? null,
+        autoPowerOnGenerationAboveKw: miner.autoPowerOnGenerationAboveKw ?? null,
         autoPowerOffBatteryBelowPercent: miner.autoPowerOffBatteryBelowPercent ?? null,
+        autoPowerOnBatteryAbovePercent:
+          miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
         autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes ?? 10,
         overheatProtectionEnabled: miner.overheatProtectionEnabled ?? true,
         overheatShutdownTempC: miner.overheatShutdownTempC ?? 84,

@@ -31,7 +31,10 @@ export async function GET(_: NextRequest, { params }: Params) {
       autoPowerOnGridRestore: miner.autoPowerOnGridRestore,
       autoPowerOffGridLoss: miner.autoPowerOffGridLoss,
       autoPowerOffGenerationBelowKw: miner.autoPowerOffGenerationBelowKw ?? null,
+      autoPowerOnGenerationAboveKw: miner.autoPowerOnGenerationAboveKw ?? null,
       autoPowerOffBatteryBelowPercent: miner.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent:
+        miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes,
       overheatProtectionEnabled: miner.overheatProtectionEnabled,
       overheatShutdownTempC: miner.overheatShutdownTempC ?? 84,
@@ -57,7 +60,10 @@ export async function GET(_: NextRequest, { params }: Params) {
       autoPowerOnGridRestore: miner.autoPowerOnGridRestore ?? false,
       autoPowerOffGridLoss: miner.autoPowerOffGridLoss ?? false,
       autoPowerOffGenerationBelowKw: miner.autoPowerOffGenerationBelowKw ?? null,
+      autoPowerOnGenerationAboveKw: miner.autoPowerOnGenerationAboveKw ?? null,
       autoPowerOffBatteryBelowPercent: miner.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent:
+        miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes ?? 10,
       overheatProtectionEnabled: miner.overheatProtectionEnabled ?? true,
       overheatShutdownTempC: miner.overheatShutdownTempC ?? 84,
@@ -88,7 +94,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
     autoPowerOnGridRestore?: boolean;
     autoPowerOffGridLoss?: boolean;
     autoPowerOffGenerationBelowKw?: number | null;
+    autoPowerOnGenerationAboveKw?: number | null;
     autoPowerOffBatteryBelowPercent?: number | null;
+    autoPowerOnBatteryAbovePercent?: number | null;
     autoPowerRestoreDelayMinutes?: number;
     overheatProtectionEnabled?: boolean;
     overheatShutdownTempC?: number;
@@ -130,6 +138,18 @@ export async function PUT(request: NextRequest, { params }: Params) {
     patch.autoPowerOffGenerationBelowKw = body.autoPowerOffGenerationBelowKw;
   }
   if (
+    body.autoPowerOnGenerationAboveKw === null ||
+    body.autoPowerOnGenerationAboveKw === undefined
+  ) {
+    patch.autoPowerOnGenerationAboveKw = null;
+  } else if (
+    typeof body.autoPowerOnGenerationAboveKw === "number" &&
+    Number.isFinite(body.autoPowerOnGenerationAboveKw) &&
+    body.autoPowerOnGenerationAboveKw >= 0
+  ) {
+    patch.autoPowerOnGenerationAboveKw = body.autoPowerOnGenerationAboveKw;
+  }
+  if (
     body.autoPowerOffBatteryBelowPercent === null ||
     body.autoPowerOffBatteryBelowPercent === undefined
   ) {
@@ -141,6 +161,19 @@ export async function PUT(request: NextRequest, { params }: Params) {
     body.autoPowerOffBatteryBelowPercent <= 100
   ) {
     patch.autoPowerOffBatteryBelowPercent = body.autoPowerOffBatteryBelowPercent;
+  }
+  if (
+    body.autoPowerOnBatteryAbovePercent === null ||
+    body.autoPowerOnBatteryAbovePercent === undefined
+  ) {
+    patch.autoPowerOnBatteryAbovePercent = null;
+  } else if (
+    typeof body.autoPowerOnBatteryAbovePercent === "number" &&
+    Number.isFinite(body.autoPowerOnBatteryAbovePercent) &&
+    body.autoPowerOnBatteryAbovePercent >= 0 &&
+    body.autoPowerOnBatteryAbovePercent <= 100
+  ) {
+    patch.autoPowerOnBatteryAbovePercent = body.autoPowerOnBatteryAbovePercent;
   }
   if (
     typeof body.autoPowerRestoreDelayMinutes === "number" &&
@@ -167,6 +200,31 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (!canAccessMiner(auth.email, id, allMinerIds)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    const current = await prisma.miner.findUnique({ where: { id } });
+    if (!current) {
+      return NextResponse.json({ error: "Miner not found" }, { status: 404 });
+    }
+    const effectiveOff =
+      patch.autoPowerOffBatteryBelowPercent === undefined
+        ? current.autoPowerOffBatteryBelowPercent
+        : patch.autoPowerOffBatteryBelowPercent;
+    const effectiveOnRaw =
+      patch.autoPowerOnBatteryAbovePercent === undefined
+        ? current.autoPowerOnBatteryAbovePercent
+        : patch.autoPowerOnBatteryAbovePercent;
+    const effectiveOn =
+      effectiveOnRaw ?? effectiveOff ?? null;
+    if (
+      typeof effectiveOff === "number" &&
+      typeof effectiveOn === "number" &&
+      effectiveOn < effectiveOff
+    ) {
+      return NextResponse.json(
+        { error: "Auto ON battery threshold must be greater than or equal to Auto OFF threshold." },
+        { status: 400 },
+      );
+    }
+
     const updated = await prisma.miner.update({
       where: { id },
       data: patch,
@@ -179,7 +237,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
       autoPowerOnGridRestore: updated.autoPowerOnGridRestore,
       autoPowerOffGridLoss: updated.autoPowerOffGridLoss,
       autoPowerOffGenerationBelowKw: updated.autoPowerOffGenerationBelowKw ?? null,
+      autoPowerOnGenerationAboveKw: updated.autoPowerOnGenerationAboveKw ?? null,
       autoPowerOffBatteryBelowPercent: updated.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent:
+        updated.autoPowerOnBatteryAbovePercent ?? updated.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: updated.autoPowerRestoreDelayMinutes,
       overheatProtectionEnabled: updated.overheatProtectionEnabled,
       overheatShutdownTempC: updated.overheatShutdownTempC ?? 84,
@@ -193,10 +254,28 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (!canAccessMiner(auth.email, id, allMinerIds)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    const existing = minerStates.get(id);
-    if (!existing) {
-      return NextResponse.json({ error: "Miner not found" }, { status: 404 });
-    }
+    const existing = minerStates.get(id) ?? {
+      minerId: id,
+      lastSeen: null,
+      lastMetric: null,
+      autoRestartEnabled: false,
+      postRestartGraceMinutes: 10,
+      lowHashrateThresholdGh: 10,
+      autoPowerOnGridRestore: false,
+      autoPowerOffGridLoss: false,
+      boundTuyaDeviceId: null,
+      autoPowerOffGenerationBelowKw: null,
+      autoPowerOnGenerationAboveKw: null,
+      autoPowerOffBatteryBelowPercent: null,
+      autoPowerOnBatteryAbovePercent: null,
+      autoPowerRestoreDelayMinutes: 10,
+      overheatProtectionEnabled: true,
+      overheatShutdownTempC: 84,
+      overheatLocked: false,
+      overheatLockedAt: null,
+      overheatLastTempC: null,
+      expectedHashrate: null,
+    };
     if (typeof patch.autoRestartEnabled === "boolean") {
       existing.autoRestartEnabled = patch.autoRestartEnabled;
     }
@@ -219,10 +298,42 @@ export async function PUT(request: NextRequest, { params }: Params) {
       existing.autoPowerOffGenerationBelowKw = patch.autoPowerOffGenerationBelowKw;
     }
     if (
+      patch.autoPowerOnGenerationAboveKw === null ||
+      typeof patch.autoPowerOnGenerationAboveKw === "number"
+    ) {
+      existing.autoPowerOnGenerationAboveKw = patch.autoPowerOnGenerationAboveKw;
+    }
+    if (
       patch.autoPowerOffBatteryBelowPercent === null ||
       typeof patch.autoPowerOffBatteryBelowPercent === "number"
     ) {
       existing.autoPowerOffBatteryBelowPercent = patch.autoPowerOffBatteryBelowPercent;
+    }
+    const effectiveOff =
+      patch.autoPowerOffBatteryBelowPercent === undefined
+        ? existing.autoPowerOffBatteryBelowPercent ?? null
+        : patch.autoPowerOffBatteryBelowPercent;
+    const effectiveOnRaw =
+      patch.autoPowerOnBatteryAbovePercent === undefined
+        ? existing.autoPowerOnBatteryAbovePercent ?? null
+        : patch.autoPowerOnBatteryAbovePercent;
+    const effectiveOn =
+      effectiveOnRaw ?? effectiveOff ?? null;
+    if (
+      typeof effectiveOff === "number" &&
+      typeof effectiveOn === "number" &&
+      effectiveOn < effectiveOff
+    ) {
+      return NextResponse.json(
+        { error: "Auto ON battery threshold must be greater than or equal to Auto OFF threshold." },
+        { status: 400 },
+      );
+    }
+    if (
+      patch.autoPowerOnBatteryAbovePercent === null ||
+      typeof patch.autoPowerOnBatteryAbovePercent === "number"
+    ) {
+      existing.autoPowerOnBatteryAbovePercent = patch.autoPowerOnBatteryAbovePercent;
     }
     if (typeof patch.autoPowerRestoreDelayMinutes === "number") {
       existing.autoPowerRestoreDelayMinutes = patch.autoPowerRestoreDelayMinutes;
@@ -242,7 +353,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
       autoPowerOnGridRestore: existing.autoPowerOnGridRestore ?? false,
       autoPowerOffGridLoss: existing.autoPowerOffGridLoss ?? false,
       autoPowerOffGenerationBelowKw: existing.autoPowerOffGenerationBelowKw ?? null,
+      autoPowerOnGenerationAboveKw: existing.autoPowerOnGenerationAboveKw ?? null,
       autoPowerOffBatteryBelowPercent: existing.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent:
+        existing.autoPowerOnBatteryAbovePercent ?? existing.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: existing.autoPowerRestoreDelayMinutes ?? 10,
       overheatProtectionEnabled: existing.overheatProtectionEnabled ?? true,
       overheatShutdownTempC: existing.overheatShutdownTempC ?? 84,

@@ -1,8 +1,9 @@
+import AppsRoundedIcon from "@mui/icons-material/AppsRounded";
 import type { MinerState } from "@/app/lib/types";
 import {
   Box,
   Button,
-  Checkbox,
+  Chip,
   Collapse,
   FormControl,
   FormControlLabel,
@@ -10,6 +11,7 @@ import {
   Paper,
   Select,
   Stack,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -79,6 +81,13 @@ export function TuyaSection({
   onSaveTuyaBinding,
   onRequestTuyaSwitchConfirm,
 }: TuyaSectionProps) {
+  const statusLabel = (d: TuyaDevice) =>
+    d.on === null ? (d.online ? "?" : t(uiLang, "offl")) : d.on ? onText : offText;
+  const statusVariant = (d: TuyaDevice) =>
+    d.on === null ? "outlined" : d.on ? "filled" : "outlined";
+  const statusColor = (d: TuyaDevice): "success" | "default" =>
+    d.on === true ? "success" : "default";
+
   return (
     <Paper sx={{ p: 1.25, mb: 1.25 }}>
       <Stack
@@ -90,19 +99,43 @@ export function TuyaSection({
         sx={{ cursor: "pointer" }}
       >
         <Stack direction="row" spacing={1} alignItems="center" minWidth={0}>
+          <AppsRoundedIcon sx={{ fontSize: 18, color: "info.light", flexShrink: 0 }} />
           <Typography variant="subtitle2" fontWeight={800}>
             {t(uiLang, "smartlife_automats")} ({visibleTuyaDevices.length}/{tuyaData?.total ?? tuyaData?.devices.length ?? 0})
           </Typography>
 
           {tuyaCollapsed && (
-            <Typography variant="caption" color="text.secondary" noWrap>
-              {visibleTuyaDevices.length === 0
-                ? t(uiLang, "no_devices")
-                : visibleTuyaDevices
-                    .slice(0, 4)
-                    .map((d) => `${d.name}: ${d.on === null ? (d.online ? "?" : t(uiLang, "offl")) : d.on ? onText : offText}`)
-                    .join(" • ")}
-            </Typography>
+            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0, overflow: "hidden" }}>
+              {visibleTuyaDevices.length === 0 ? (
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={t(uiLang, "no_devices")}
+                  sx={{ borderStyle: "dashed" }}
+                />
+              ) : (
+                visibleTuyaDevices.slice(0, 4).map((d) => (
+                  <Chip
+                    key={`${d.id}-collapsed`}
+                    size="small"
+                    color={statusColor(d)}
+                    variant={statusVariant(d)}
+                    label={d.name}
+                    title={`${d.name}: ${statusLabel(d)}`}
+                    sx={{
+                      maxWidth: 220,
+                      borderWidth: d.on === false ? 2 : undefined,
+                      "& .MuiChip-label": {
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontWeight: 700,
+                      },
+                    }}
+                  />
+                ))
+              )}
+            </Stack>
           )}
         </Stack>
 
@@ -150,13 +183,13 @@ export function TuyaSection({
                         </Typography>
                       </TableCell>
                       <TableCell align="center">
-                        <Typography
-                          variant="body2"
-                          fontWeight={700}
-                          color={device.online ? "success.main" : "error.main"}
-                        >
-                          {device.on === null ? (device.online ? "?" : t(uiLang, "offl")) : device.on ? onText : offText}
-                        </Typography>
+                        <Chip
+                          size="small"
+                          color={statusColor(device)}
+                          variant={statusVariant(device)}
+                          label={statusLabel(device)}
+                          sx={{ minWidth: 74, fontWeight: 700, borderWidth: device.on === false ? 2 : undefined }}
+                        />
                       </TableCell>
                       <TableCell align="center">
                         {typeof device.powerW === "number" ? `${device.powerW.toFixed(0)}W` : "-"}
@@ -220,7 +253,7 @@ export function TuyaSection({
 
         <Box sx={{ mt: 0.75, display: "flex", justifyContent: "flex-end" }}>
           <FormControlLabel
-            control={<Checkbox checked={hideUnboundAutomats} onChange={(e) => onToggleHideUnbound(e.target.checked)} />}
+            control={<Switch checked={hideUnboundAutomats} onChange={(e) => onToggleHideUnbound(e.target.checked)} />}
             label={t(uiLang, "hide_unbinded_automats")}
           />
         </Box>

@@ -1,14 +1,12 @@
 import type { ReactNode } from "react";
-import { Box, Button, Paper, Stack } from "@mui/material";
+import { Box, Button, FormControl, MenuItem, Paper, Select, Stack } from "@mui/material";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
 type HomeHeaderProps = {
   uiLang: UiLang;
-  loading: boolean;
   reloadPending: boolean;
   minersCount: number;
   settingsIcon: ReactNode;
-  refreshIcon: ReactNode;
   logoutIcon: ReactNode;
   onOpenSettings: () => void;
   onSetLang: (lang: UiLang) => void;
@@ -19,11 +17,9 @@ type HomeHeaderProps = {
 
 export function HomeHeader({
   uiLang,
-  loading,
   reloadPending,
   minersCount,
   settingsIcon,
-  refreshIcon,
   logoutIcon,
   onOpenSettings,
   onSetLang,
@@ -31,14 +27,6 @@ export function HomeHeader({
   onReloadConfig,
   onLogout,
 }: HomeHeaderProps) {
-  const langButtonSx = (lang: UiLang) => ({
-    minWidth: 56,
-    borderRadius: 999,
-    bgcolor: uiLang === lang ? "primary.main" : "transparent",
-    color: uiLang === lang ? "primary.contrastText" : "text.secondary",
-    borderColor: "divider",
-  });
-
   return (
     <Paper
       component="header"
@@ -89,18 +77,35 @@ export function HomeHeader({
       </Stack>
 
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" justifyContent="flex-end">
-        <Stack direction="row" spacing={0.75}>
-          <Button variant="outlined" onClick={() => onSetLang("en")} sx={langButtonSx("en")}>EN</Button>
-          <Button variant="outlined" onClick={() => onSetLang("uk")} sx={langButtonSx("uk")}>UA</Button>
-        </Stack>
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <Select
+            value={uiLang}
+            onChange={(e) => onSetLang(e.target.value as UiLang)}
+            displayEmpty
+            renderValue={(value) => (value === "uk" ? "🇺🇦 Українська" : "🇬🇧 English")}
+            sx={{
+              borderRadius: 2,
+              bgcolor: "rgba(148,163,184,0.12)",
+              "& .MuiSelect-select": { py: 0.8, fontWeight: 700 },
+            }}
+          >
+            <MenuItem value="en">🇬🇧 English</MenuItem>
+            <MenuItem value="uk">🇺🇦 Українська</MenuItem>
+          </Select>
+        </FormControl>
 
-        <Button onClick={onRefresh} startIcon={refreshIcon} color="primary">
-          {t(uiLang, "refresh")}
+        <Button
+          onClick={onRefresh}
+          color="secondary"
+          variant="outlined"
+          sx={{ borderRadius: 2 }}
+        >
+          {t(uiLang, "sync")}
         </Button>
 
         <Button
           onClick={onReloadConfig}
-          disabled={reloadPending || loading || minersCount === 0}
+          disabled={reloadPending || minersCount === 0}
           color="secondary"
           variant="outlined"
           sx={{ borderRadius: 2 }}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
-import ArrowUpwardRoundedIcon from "@mui/icons-material/ArrowUpwardRounded";
+import KeyboardArrowUpRoundedIcon from "@mui/icons-material/KeyboardArrowUpRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import {
   Alert,
@@ -32,6 +32,7 @@ type MinerControlPhase = "RESTARTING" | "SLEEPING" | "WAKING" | "WARMING_UP";
 type MinerControlState = {
   phase: MinerControlPhase;
   since: number;
+  source?: "RESTART" | "WAKE" | "POWER_ON";
 };
 
 type MinerMetric = {
@@ -57,6 +58,7 @@ type MinerMetric = {
   boardStates?: string[];
   statesOk?: boolean;
   hashrateRealtime?: number;
+  minerMode?: number;
   hashrateAverage?: number;
   runtimeSeconds?: number;
   poolRejectionRate?: number;
@@ -90,6 +92,7 @@ type MinerGridSectionProps = {
   onText: string;
   offText: string;
   statusBadgesVertical: boolean;
+  boardCountByMiner: Record<string, number>;
   editingAliasFor: string | null;
   aliasDraft: string;
   lowHashrateRestartGraceMs: number;
@@ -121,6 +124,7 @@ export function MinerGridSection({
   onText,
   offText,
   statusBadgesVertical,
+  boardCountByMiner,
   editingAliasFor,
   aliasDraft,
   lowHashrateRestartGraceMs,
@@ -137,6 +141,7 @@ export function MinerGridSection({
   onUnlockOverheatControl,
 }: MinerGridSectionProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const compactCellSx = { whiteSpace: "nowrap", px: 0.75, py: 0.5, lineHeight: 1.15 };
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -155,6 +160,7 @@ export function MinerGridSection({
         ref={gridRef}
         container
         spacing={1.25}
+        alignItems="stretch"
       >
         {(() => {
           const orderedCards = [...orderedMiners.map((m) => m.minerId)].sort((a, b) => {
@@ -171,18 +177,8 @@ export function MinerGridSection({
             const metric = (miner.lastMetric ?? null) as MinerMetric | null;
 
             const online = metric?.online;
-            const statusLabel =
-              online === true
-                ? t(uiLang, "online")
-                : online === false
-                  ? t(uiLang, "offline")
-                  : t(uiLang, "unknown");
-            const statusColor = online === true ? "success" : online === false ? "error" : "default";
 
             const control = minerControlStates[miner.minerId];
-            const controlAgeSec = control ? Math.max(0, Math.floor((nowMs - control.since) / 1000)) : 0;
-            const controlAgeMin = Math.floor(controlAgeSec / 60);
-            const controlAgeRemSec = controlAgeSec % 60;
             const restartAtMs = miner.lastRestartAt ? new Date(miner.lastRestartAt).getTime() : NaN;
 
             const serverPendingPhase: MinerControlPhase | null =
@@ -202,40 +198,65 @@ export function MinerGridSection({
 
             const effectivePhase: MinerControlPhase | null =
               control?.phase ?? serverPendingPhase ?? (hasServerWarmup ? "WARMING_UP" : null);
+            const pendingAction = pendingActionByMiner[miner.minerId];
+            const minerMode = typeof metric?.minerMode === "number" ? metric.minerMode : null;
+            const isSleepingLike =
+              effectivePhase === "SLEEPING" ||
+              minerMode === 1;
+            const statusLabel = isSleepingLike
+              ? t(uiLang, "sleep")
+              : online === true
+                ? t(uiLang, "online")
+                : online === false
+                  ? t(uiLang, "offline")
+                  : t(uiLang, "unknown");
+            const statusColor: "success" | "default" =
+              online === true && !isSleepingLike ? "success" : "default";
+            const statusVariant: "filled" | "outlined" =
+              online === true && !isSleepingLike ? "filled" : "outlined";
+            const hasOnlineBorder = online === true && !isSleepingLike;
+            const hasOfflineBorder = online === false;
 
             const overheatLocked = miner.overheatLocked === true;
-            const controlText =
-              overheatLocked
-                ? t(uiLang, "overheat_lock_active")
-                : effectivePhase === "RESTARTING"
-                ? t(uiLang, "restarting")
-                : effectivePhase === "SLEEPING"
-                  ? t(uiLang, "sleeping")
-                  : effectivePhase === "WAKING"
-                    ? t(uiLang, "waking")
-                    : effectivePhase === "WARMING_UP"
-                      ? t(uiLang, "warm_up_after_restart_wake")
-                      : null;
 
             const buttonsLocked =
               effectivePhase === "RESTARTING" ||
               effectivePhase === "WAKING" ||
               effectivePhase === "WARMING_UP";
-
-            const pendingAction = pendingActionByMiner[miner.minerId];
             const hasPendingAction = Boolean(pendingAction);
-            const restartDisabled = hasPendingAction || buttonsLocked || effectivePhase === "SLEEPING";
-            const sleepDisabled = hasPendingAction || buttonsLocked || effectivePhase === "SLEEPING";
-            const wakeDisabled = hasPendingAction || buttonsLocked || overheatLocked;
+            const restartDisabled = hasPendingAction || buttonsLocked || overheatLocked || online !== true || isSleepingLike;
+            const sleepDisabled = hasPendingAction || buttonsLocked || online !== true || isSleepingLike;
+            const wakeDisabled =
+              hasPendingAction || buttonsLocked || overheatLocked || !isSleepingLike;
             const restartDisabledFinal = restartDisabled || overheatLocked;
             const restartInProgress =
               pendingAction === "RESTART" ||
               effectivePhase === "RESTARTING" ||
-              effectivePhase === "WARMING_UP";
+              (effectivePhase === "WARMING_UP" && control?.source === "RESTART");
+            const wakeInProgress =
+              pendingAction === "WAKE" ||
+              effectivePhase === "WAKING" ||
+              (effectivePhase === "WARMING_UP" &&
+                (control?.source === "WAKE" || control?.source === "POWER_ON"));
+            const actionButtonSx = {
+              borderRadius: "8px !important",
+              minWidth: 86,
+              textTransform: "none",
+              fontWeight: 700,
+              "&.Mui-disabled": {
+                bgcolor: "transparent",
+                color: "#9ca3af",
+                borderColor: "#d1d5db",
+              },
+            } as const;
 
             const alias = minerAliases[miner.minerId]?.trim();
             const titleText = alias || `${metric?.asicType ?? "Antminer"} ${miner.minerId}`;
             const linkedDevice = deviceById.get(tuyaBindingByMiner[miner.minerId] ?? "");
+            const linkedDeviceVariant: "filled" | "outlined" =
+              linkedDevice?.on === true ? "filled" : "outlined";
+            const linkedDeviceColor: "success" | "default" =
+              linkedDevice?.on === true ? "success" : "default";
 
             const chips = metric?.boardChips ?? [];
             const hwErrors = metric?.boardHwErrors ?? [];
@@ -262,6 +283,7 @@ export function MinerGridSection({
               inletTemps.length,
               outletTemps.length,
               stateMap.size,
+              boardCountByMiner[miner.minerId] ?? 0,
               1,
             );
 
@@ -289,19 +311,58 @@ export function MinerGridSection({
 
             const expectedMh = metric?.expectedHashrate;
             const currentMh = metric?.hashrate;
-            const networkNormal =
-              online === true &&
-              (metric?.boardStates?.some((s) => s.toLowerCase().includes("network:ok")) ?? true);
-            const fanNormal = (metric?.fan ?? 0) > 1000;
-            const tempNormal = (metric?.temp ?? 0) > 0 && (metric?.temp ?? 0) < 80;
-            const hashrateNormal =
-              typeof expectedMh === "number" && expectedMh > 0 && typeof currentMh === "number"
+            const inStartupPhase =
+              effectivePhase === "RESTARTING" ||
+              effectivePhase === "WAKING" ||
+              effectivePhase === "WARMING_UP";
+            const isOffline = online === false;
+            const boardHashrateAbnormalByState = rows.some((row) =>
+              String(row.state).toLowerCase().includes("stateabnormal"),
+            );
+            const boardHashrateAbnormalByRate = rows.some((row) => {
+              if (typeof row.real !== "number" || typeof row.ideal !== "number") return false;
+              if (row.ideal <= 0) return false;
+              return row.real < row.ideal * 0.9;
+            });
+            const networkNormal = isOffline
+              ? null
+              : inStartupPhase
+                ? null
+              : online === true
+                ? (metric?.boardStates?.some((s) => s.toLowerCase().includes("network:ok")) ?? true)
+                : null;
+            const fanNormal = isOffline || inStartupPhase ? null : (metric?.fan ?? 0) > 1000;
+            const tempNormal = isOffline || inStartupPhase ? null : (metric?.temp ?? 0) > 0 && (metric?.temp ?? 0) < 82;
+            const hashrateNormal = isOffline
+              ? null
+              : inStartupPhase
+                ? null
+              : boardHashrateAbnormalByState || boardHashrateAbnormalByRate
+                ? false
+              : typeof expectedMh === "number" && expectedMh > 0 && typeof currentMh === "number"
                 ? currentMh >= expectedMh * 0.9
                 : true;
 
             return (
-              <Grid key={miner.minerId} size={{ xs: 12, lg: 4 }}>
-                <Paper sx={{ p: 1.1, display: "grid", gap: 1 }}>
+              <Grid key={miner.minerId} size={{ xs: 12, lg: 4 }} sx={{ display: "flex" }}>
+                <Paper
+                  sx={{
+                    p: 1.1,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 1,
+                    flex: 1,
+                    height: "100%",
+                    borderStyle: "solid",
+                    borderWidth: 1,
+                    borderColor: (theme) =>
+                      hasOnlineBorder
+                        ? theme.palette.success.main
+                        : hasOfflineBorder
+                          ? theme.palette.grey[600]
+                          : theme.palette.grey[500],
+                  }}
+                >
                   <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
                     <Box minWidth={0} flex={1}>
                       {editingAliasFor === miner.minerId ? (
@@ -318,21 +379,66 @@ export function MinerGridSection({
                         </Stack>
                       ) : (
                         <Stack spacing={0.35}>
-                          <Stack direction="row" spacing={0.5} alignItems="center" minWidth={0}>
-                            <Typography variant="subtitle1" fontWeight={800} noWrap title={titleText}>
-                              {titleText}
-                            </Typography>
-                            <Tooltip title="Rename">
-                              <IconButton size="small" color="inherit" onClick={() => onStartAliasEdit(miner.minerId, alias || "")}> 
-                                <EditRoundedIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
+                          <Stack
+                            direction="row"
+                            spacing={0.7}
+                            alignItems="center"
+                            minWidth={0}
+                            flexWrap="nowrap"
+                            sx={{ overflow: "hidden" }}
+                          >
+                            {linkedDevice ? (
+                              <Chip
+                                size="small"
+                                color={linkedDeviceColor}
+                                variant={linkedDeviceVariant}
+                                label={linkedDevice.name}
+                                title={linkedDevice.name}
+                                sx={{
+                                  maxWidth: 220,
+                                  borderWidth: linkedDevice?.on === false ? 2 : undefined,
+                                  "& .MuiChip-label": {
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                    fontWeight: 700,
+                                  },
+                                }}
+                              />
+                            ) : null}
+                            <Chip
+                              label={statusLabel}
+                              size="small"
+                              color={statusColor}
+                              variant={statusVariant}
+                              sx={{
+                                borderWidth:
+                                  statusLabel === t(uiLang, "offline") ? 2 : undefined,
+                                fontWeight: 700,
+                              }}
+                            />
+                            <Stack direction="row" spacing={0.2} alignItems="center" sx={{ minWidth: 0, flexShrink: 1, maxWidth: "100%" }}>
+                              <Typography
+                                variant="subtitle1"
+                                fontWeight={800}
+                                noWrap
+                                title={titleText}
+                                sx={{ minWidth: 0 }}
+                              >
+                                {titleText}
+                              </Typography>
+                              <Tooltip title="Rename">
+                                <IconButton
+                                  size="small"
+                                  color="inherit"
+                                  sx={{ p: 0.35 }}
+                                  onClick={() => onStartAliasEdit(miner.minerId, alias || "")}
+                                >
+                                  <EditRoundedIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </Stack>
                           </Stack>
-                          {linkedDevice ? (
-                            <Typography variant="caption" color="text.secondary" noWrap>
-                              {t(uiLang, "automat")}: {linkedDevice.name} [{linkedDevice.on === null ? "?" : linkedDevice.on ? onText : offText}]
-                            </Typography>
-                          ) : null}
                         </Stack>
                       )}
                     </Box>
@@ -345,29 +451,13 @@ export function MinerGridSection({
                       </Tooltip>
                       <Tooltip title="Move to top">
                         <IconButton color="primary" size="small" onClick={() => onMoveCardToTop(miner.minerId)}>
-                          <ArrowUpwardRoundedIcon fontSize="small" />
+                          <KeyboardArrowUpRoundedIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
                     </Stack>
                   </Stack>
 
                   <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap">
-                    <Chip
-                      label={statusLabel}
-                      size="small"
-                      color={statusColor === "default" ? "default" : statusColor}
-                      variant={statusColor === "default" ? "outlined" : "filled"}
-                    />
-                    {controlText ? (
-                      <Chip
-                        label={`${controlText} (${controlAgeMin}m ${controlAgeRemSec}s)`}
-                        size="small"
-                        color={overheatLocked ? "error" : "warning"}
-                        variant="outlined"
-                      />
-                    ) : null}
-                    <Chip label={`${totalHashrateGh} GH/s`} size="small" variant="outlined" />
-                    <Chip label={formatLastSeen(miner.lastSeen)} size="small" variant="outlined" />
                     {overheatLocked ? (
                       <Chip
                         label={`${t(uiLang, "locked")} ${typeof miner.overheatLastTempC === "number" ? `(${miner.overheatLastTempC.toFixed(1)}C)` : ""}`}
@@ -377,10 +467,14 @@ export function MinerGridSection({
                     ) : null}
                   </Stack>
 
-                  <Stack
-                    direction={statusBadgesVertical ? "column" : "row"}
-                    spacing={0.6}
-                    flexWrap="wrap"
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gap: 0.6,
+                      gridTemplateColumns: statusBadgesVertical
+                        ? "minmax(0, 1fr)"
+                        : "repeat(4, minmax(0, 1fr))",
+                    }}
                   >
                     {[
                       { label: t(uiLang, "hashrate"), ok: hashrateNormal },
@@ -390,17 +484,38 @@ export function MinerGridSection({
                     ].map((item) => (
                       <Chip
                         key={`${miner.minerId}-${item.label}`}
-                        label={`${item.label}: ${item.ok ? "OK" : t(uiLang, "warn")}`}
+                        label={`${item.label}: ${item.ok === null ? "-" : item.ok ? "OK" : t(uiLang, "warn")}`}
                         size="small"
-                        color={item.ok ? "success" : "warning"}
+                        color={item.ok === null ? "default" : item.ok ? "success" : "warning"}
                         variant="outlined"
+                        sx={{
+                          width: "100%",
+                          borderWidth: hasOnlineBorder ? 1 : item.ok === null ? 1 : 2,
+                          borderColor: (theme) =>
+                            item.ok === true ? theme.palette.success.main : theme.palette.grey[600],
+                        }}
                       />
                     ))}
-                  </Stack>
+                  </Box>
 
-                  <Grid container spacing={0.8}>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
+                  <Grid container spacing={0.8} alignItems="stretch">
+                    <Grid size={{ xs: 12, md: 6 }} sx={{ display: "flex" }}>
+                      <Paper
+                        variant="outlined"
+                        sx={{
+                          p: 1.35,
+                          borderRadius: 2,
+                          height: "100%",
+                          width: "100%",
+                          borderWidth: hasOnlineBorder ? 1 : hasOfflineBorder ? 1 : 2,
+                          borderColor: (theme) =>
+                            hasOnlineBorder
+                              ? theme.palette.success.main
+                              : hasOfflineBorder
+                                ? theme.palette.grey[600]
+                                : theme.palette.grey[500],
+                        }}
+                      >
                         <Stack spacing={0.6}>
                           <Typography variant="caption" color="text.secondary">{t(uiLang, "real_time")}</Typography>
                           <Typography variant="h5" fontWeight={800}>{realtimeGh} <Typography component="span" variant="body2">GH/s</Typography></Typography>
@@ -410,8 +525,23 @@ export function MinerGridSection({
                         </Stack>
                       </Paper>
                     </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
+                    <Grid size={{ xs: 12, md: 6 }} sx={{ display: "flex" }}>
+                      <Paper
+                        variant="outlined"
+                        sx={{
+                          p: 1.35,
+                          borderRadius: 2,
+                          height: "100%",
+                          width: "100%",
+                          borderWidth: hasOnlineBorder ? 1 : hasOfflineBorder ? 1 : 2,
+                          borderColor: (theme) =>
+                            hasOnlineBorder
+                              ? theme.palette.success.main
+                              : hasOfflineBorder
+                                ? theme.palette.grey[600]
+                                : theme.palette.grey[500],
+                        }}
+                      >
                         <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
                           {t(uiLang, "chains_rate")}
                         </Typography>
@@ -442,35 +572,59 @@ export function MinerGridSection({
                     </Grid>
                   </Grid>
 
-                  <TableContainer sx={{ maxHeight: 170 }}>
-                    <Table size="small" stickyHeader>
+                  <TableContainer sx={{ overflowY: "visible", overflowX: "auto", flex: 1, minHeight: 0 }}>
+                    <Table size="small">
                       <TableHead>
                         <TableRow>
-                          <TableCell>{t(uiLang, "bd")}</TableCell>
-                          <TableCell align="center">{t(uiLang, "chip")}</TableCell>
-                          <TableCell align="center">HW</TableCell>
-                          <TableCell align="center">{t(uiLang, "frq")}</TableCell>
-                          <TableCell align="center">{t(uiLang, "real")}</TableCell>
-                          <TableCell align="center">{t(uiLang, "theo")}</TableCell>
-                          <TableCell align="center">{t(uiLang, "in")}</TableCell>
-                          <TableCell align="center">{t(uiLang, "out")}</TableCell>
-                          <TableCell align="center">{t(uiLang, "st")}</TableCell>
+                          <TableCell sx={compactCellSx}>{t(uiLang, "bd")}</TableCell>
+                          <TableCell align="center" sx={compactCellSx}>{t(uiLang, "chip")}</TableCell>
+                          <TableCell align="center" sx={compactCellSx}>HW</TableCell>
+                          <TableCell align="center" sx={compactCellSx}>{t(uiLang, "frq")}</TableCell>
+                          <TableCell align="center" sx={compactCellSx}>{t(uiLang, "real")}</TableCell>
+                          <TableCell align="center" sx={compactCellSx}>{t(uiLang, "theo")}</TableCell>
+                          <TableCell align="center" sx={compactCellSx}>{t(uiLang, "in")}</TableCell>
+                          <TableCell align="center" sx={compactCellSx}>{t(uiLang, "out")}</TableCell>
+                          <TableCell align="center" sx={compactCellSx}>{t(uiLang, "st")}</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {rows.map((row) => (
                           <TableRow key={`${miner.minerId}-board-${row.board}`} hover>
-                            <TableCell>{row.board}</TableCell>
-                            <TableCell align="center">{row.chips}</TableCell>
-                            <TableCell align="center">{row.hw}</TableCell>
-                            <TableCell align="center">{row.freq}</TableCell>
-                            <TableCell align="center" sx={{ color: "success.main", fontWeight: 700 }}>
+                            <TableCell sx={compactCellSx}>{row.board}</TableCell>
+                            <TableCell align="center" sx={compactCellSx}>{row.chips}</TableCell>
+                            <TableCell align="center" sx={compactCellSx}>{row.hw}</TableCell>
+                            <TableCell align="center" sx={compactCellSx}>{row.freq}</TableCell>
+                            <TableCell
+                              align="center"
+                              sx={{
+                                ...compactCellSx,
+                                color:
+                                  typeof row.real === "number" &&
+                                  typeof row.ideal === "number" &&
+                                  row.ideal > 0 &&
+                                  row.real < row.ideal * 0.9
+                                    ? "warning.main"
+                                    : "success.main",
+                                fontWeight: 700,
+                              }}
+                            >
                               {typeof row.real === "number" ? `${row.real} GH/s` : row.real}
                             </TableCell>
-                            <TableCell align="center">{typeof row.ideal === "number" ? `${row.ideal} GH/s` : row.ideal}</TableCell>
-                            <TableCell align="center">{row.inlet}</TableCell>
-                            <TableCell align="center">{row.outlet}</TableCell>
-                            <TableCell align="center">
+                            <TableCell align="center" sx={compactCellSx}>{typeof row.ideal === "number" ? `${row.ideal} GH/s` : row.ideal}</TableCell>
+                            <TableCell align="center" sx={compactCellSx}>{row.inlet}</TableCell>
+                            <TableCell align="center" sx={compactCellSx}>{row.outlet}</TableCell>
+                            <TableCell
+                              align="center"
+                              sx={{
+                                ...compactCellSx,
+                                color: String(row.state).toLowerCase().includes("stateabnormal")
+                                  ? "warning.main"
+                                  : "inherit",
+                                fontWeight: String(row.state).toLowerCase().includes("stateabnormal")
+                                  ? 700
+                                  : undefined,
+                              }}
+                            >
                               {String(row.state).toUpperCase() === "OK" ? t(uiLang, "normal") : row.state}
                             </TableCell>
                           </TableRow>
@@ -500,13 +654,20 @@ export function MinerGridSection({
                     </Table>
                   </TableContainer>
 
-                  <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                    <Stack direction="row" spacing={0.6} flexWrap="wrap">
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="flex-end"
+                    spacing={1}
+                    sx={{ width: "100%" }}
+                  >
+                    <Stack direction="row" spacing={0.6} flexWrap="wrap" sx={{ ml: "auto", flexShrink: 0, justifyContent: "flex-end" }}>
                       <Button
                         size="small"
                         variant={restartDisabledFinal ? "outlined" : "contained"}
                         color="primary"
                         disabled={restartDisabledFinal}
+                        sx={actionButtonSx}
                         title={overheatLocked ? "Overheat lock is active. Unlock control first." : undefined}
                         onClick={() => onRequestMinerCommandConfirm(miner.minerId, "RESTART")}
                         startIcon={restartInProgress ? <ButtonSpinnerIcon color={restartDisabledFinal ? "#94a3b8" : "currentColor"} /> : null}
@@ -518,6 +679,7 @@ export function MinerGridSection({
                         variant={sleepDisabled ? "outlined" : "contained"}
                         color="inherit"
                         disabled={sleepDisabled}
+                        sx={actionButtonSx}
                         onClick={() => onRequestMinerCommandConfirm(miner.minerId, "SLEEP")}
                         startIcon={pendingAction === "SLEEP" ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
                       >
@@ -528,9 +690,10 @@ export function MinerGridSection({
                         variant={wakeDisabled ? "outlined" : "contained"}
                         color="success"
                         disabled={wakeDisabled}
+                        sx={actionButtonSx}
                         title={overheatLocked ? "Overheat lock is active. Unlock control first." : undefined}
                         onClick={() => onRequestMinerCommandConfirm(miner.minerId, "WAKE")}
-                        startIcon={pendingAction === "WAKE" ? <ButtonSpinnerIcon color={wakeDisabled ? "#9ca3af" : "currentColor"} /> : null}
+                        startIcon={wakeInProgress ? <ButtonSpinnerIcon color={wakeDisabled ? "#9ca3af" : "currentColor"} /> : null}
                       >
                         {t(uiLang, "wake")}
                       </Button>
@@ -545,14 +708,6 @@ export function MinerGridSection({
                         </Button>
                       ) : null}
                     </Stack>
-
-                    {metric?.error ? (
-                      <Tooltip title={metric.error}>
-                        <Typography variant="caption" color="error.main" sx={{ fontWeight: 700, cursor: "help" }}>
-                          {t(uiLang, "error")}
-                        </Typography>
-                      </Tooltip>
-                    ) : null}
                   </Stack>
                 </Paper>
               </Grid>

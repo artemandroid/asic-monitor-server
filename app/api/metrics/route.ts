@@ -10,7 +10,10 @@ import { commands, minerStates, notifications } from "@/app/lib/store";
 const NOTIFY_AUTO_RESTART = "AUTO_RESTART";
 const NOTIFY_RESTART_PROMPT = "LOW_HASHRATE_PROMPT";
 const NOTIFY_OVERHEAT_LOCK = "OVERHEAT_LOCK";
+const NOTIFY_BOARD_HASHRATE_DRIFT = "BOARD_HASHRATE_DRIFT";
 const AUTO_RESTART_TEMP_DISABLED = false;
+const BOARD_HASHRATE_DRIFT_PERCENT = 10;
+const BOARD_HASHRATE_DRIFT_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000;
 
 function toGh(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -34,6 +37,50 @@ function resolveMaxTempC(body: MinerMetric): number | null {
   }
   if (values.length === 0) return null;
   return Math.max(...values);
+}
+
+type BoardDrift = {
+  board: number;
+  realGh: number;
+  idealGh: number;
+  driftPercent: number;
+};
+
+function resolveBoardHashrateDrifts(body: MinerMetric): BoardDrift[] {
+  const real = Array.isArray(body.boardHashrates) ? body.boardHashrates : [];
+  const ideal = Array.isArray(body.boardTheoreticalHashrates) ? body.boardTheoreticalHashrates : [];
+  const count = Math.max(real.length, ideal.length);
+  const drifts: BoardDrift[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const realVal = real[i];
+    const idealVal = ideal[i];
+    if (
+      typeof realVal !== "number" ||
+      !Number.isFinite(realVal) ||
+      typeof idealVal !== "number" ||
+      !Number.isFinite(idealVal) ||
+      idealVal <= 0
+    ) {
+      continue;
+    }
+    const driftPercent = (Math.abs(realVal - idealVal) / idealVal) * 100;
+    if (driftPercent >= BOARD_HASHRATE_DRIFT_PERCENT) {
+      drifts.push({
+        board: i + 1,
+        realGh: realVal,
+        idealGh: idealVal,
+        driftPercent,
+      });
+    }
+  }
+  return drifts;
+}
+
+function formatBoardDriftMessage(minerId: string, drifts: BoardDrift[]): string {
+  const summary = drifts
+    .map((d) => `B${d.board}: ${d.realGh.toFixed(2)}/${d.idealGh.toFixed(2)} GH/s (${d.driftPercent.toFixed(1)}%)`)
+    .join("; ");
+  return `Board hashrate drift on ${minerId}: ${summary}.`;
 }
 
 export async function POST(request: NextRequest) {
@@ -98,6 +145,7 @@ export async function POST(request: NextRequest) {
 
     const hashrateGh = resolveControlHashrateGh(body);
     const maxTempC = resolveMaxTempC(body);
+    const boardDrifts = resolveBoardHashrateDrifts(body);
     const thresholdGh = Math.max(upserted.lowHashrateThresholdGh ?? 10, 0);
     const promptCooldownMs = Math.max(settings.restartDelayMinutes, 0) * 60 * 1000;
     const postRestartGraceMs =
@@ -209,6 +257,31 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (isOnline === true && boardDrifts.length > 0) {
+      const restartAnchor = upserted.lastRestartAt ?? null;
+      const ready =
+        !restartAnchor || now.getTime() - restartAnchor.getTime() >= postRestartGraceMs;
+      if (ready) {
+        const recentBoardDrift = await prisma.notification.findFirst({
+          where: { minerId, type: NOTIFY_BOARD_HASHRATE_DRIFT },
+          orderBy: { createdAt: "desc" },
+        });
+        const cooldownPassed =
+          !recentBoardDrift ||
+          now.getTime() - recentBoardDrift.createdAt.getTime() >= BOARD_HASHRATE_DRIFT_NOTIFY_COOLDOWN_MS;
+        if (cooldownPassed) {
+          await prisma.notification.create({
+            data: {
+              type: NOTIFY_BOARD_HASHRATE_DRIFT,
+              minerId,
+              action: "RESTART",
+              message: formatBoardDriftMessage(minerId, boardDrifts),
+            },
+          });
+        }
+      }
+    }
+
     await runPowerAutomation();
     return NextResponse.json({ ok: true });
   } catch {
@@ -236,7 +309,10 @@ export async function POST(request: NextRequest) {
       autoPowerOffGridLoss: existing?.autoPowerOffGridLoss ?? false,
       boundTuyaDeviceId: existing?.boundTuyaDeviceId ?? null,
       autoPowerOffGenerationBelowKw: existing?.autoPowerOffGenerationBelowKw ?? null,
+      autoPowerOnGenerationAboveKw: existing?.autoPowerOnGenerationAboveKw ?? null,
       autoPowerOffBatteryBelowPercent: existing?.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent:
+        existing?.autoPowerOnBatteryAbovePercent ?? existing?.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: existing?.autoPowerRestoreDelayMinutes ?? 10,
       overheatProtectionEnabled: existing?.overheatProtectionEnabled ?? true,
       overheatShutdownTempC: existing?.overheatShutdownTempC ?? 84,
@@ -253,6 +329,7 @@ export async function POST(request: NextRequest) {
 
     const hashrateGh = resolveControlHashrateGh(body);
     const maxTempC = resolveMaxTempC(body);
+    const boardDrifts = resolveBoardHashrateDrifts(body);
     const thresholdGh = Math.max(existing?.lowHashrateThresholdGh ?? 10, 0);
     const promptCooldownMs = Math.max(settings.restartDelayMinutes, 0) * 60 * 1000;
     const postRestartGraceMs =
@@ -353,6 +430,30 @@ export async function POST(request: NextRequest) {
         });
         const miner = minerStates.get(minerId);
         if (miner) miner.lastLowHashrateAt = nowIso;
+      }
+    }
+
+    if (isOnline === true && boardDrifts.length > 0) {
+      const anchorIso = existing?.lastRestartAt ?? null;
+      const anchor = anchorIso ? new Date(anchorIso) : null;
+      const ready = !anchor || now.getTime() - anchor.getTime() >= postRestartGraceMs;
+      if (ready) {
+        const recentBoardDrift = notifications.find(
+          (n) => n.minerId === minerId && n.type === NOTIFY_BOARD_HASHRATE_DRIFT,
+        );
+        const cooldownPassed =
+          !recentBoardDrift ||
+          now.getTime() - new Date(recentBoardDrift.createdAt).getTime() >= BOARD_HASHRATE_DRIFT_NOTIFY_COOLDOWN_MS;
+        if (cooldownPassed) {
+          notifications.unshift({
+            id: crypto.randomUUID(),
+            type: NOTIFY_BOARD_HASHRATE_DRIFT,
+            message: formatBoardDriftMessage(minerId, boardDrifts),
+            minerId,
+            action: "RESTART",
+            createdAt: nowIso,
+          });
+        }
       }
     }
 

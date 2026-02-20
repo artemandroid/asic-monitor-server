@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import type { CommandStatus } from "@/app/lib/types";
 import { prisma } from "@/app/lib/prisma";
-import { commands } from "@/app/lib/store";
+import { commands, notifications } from "@/app/lib/store";
 
 type ResultBody = {
   id?: string;
@@ -43,17 +43,43 @@ export async function POST(request: NextRequest) {
         error: body.error ?? undefined,
       },
     });
+
+    const message =
+      body.status === "DONE"
+        ? `Command ${command.type} succeeded on ${command.minerId}.`
+        : `Command ${command.type} failed on ${command.minerId}${body.error ? `: ${body.error}` : "."}`;
+    await prisma.notification.create({
+      data: {
+        type: "COMMAND_RESULT",
+        minerId: command.minerId,
+        action: null,
+        message,
+      },
+    });
   } catch {
     const idx = commands.findIndex((c) => c.id === body.id);
     if (idx < 0) {
       return NextResponse.json({ error: "Command not found" }, { status: 404 });
     }
+    const command = commands[idx];
     commands[idx] = {
       ...commands[idx],
       status: body.status,
       executedAt: new Date().toISOString(),
       error: body.error,
     };
+    const message =
+      body.status === "DONE"
+        ? `Command ${command.type} succeeded on ${command.minerId}.`
+        : `Command ${command.type} failed on ${command.minerId}${body.error ? `: ${body.error}` : "."}`;
+    notifications.unshift({
+      id: crypto.randomUUID(),
+      type: "COMMAND_RESULT",
+      message,
+      minerId: command.minerId,
+      createdAt: new Date().toISOString(),
+    });
+    if (notifications.length > 100) notifications.length = 100;
   }
 
   return NextResponse.json({ ok: true });

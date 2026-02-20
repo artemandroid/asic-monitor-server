@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Alert, Box, Button, Collapse, Paper, Stack, Typography } from "@mui/material";
+import type { SxProps, Theme } from "@mui/material/styles";
 import type { CommandType, Notification } from "@/app/lib/types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
@@ -20,6 +21,8 @@ type NotificationsSectionProps = {
   restartActionStateForNote: (note: Notification) => RestartActionState;
   onToggleCollapsed: () => void;
   onRequestMinerCommandConfirm: (minerId: string, command: CommandType) => void;
+  containerSx?: SxProps<Theme>;
+  horizontalCollapse?: boolean;
 };
 
 export function NotificationsSection({
@@ -32,9 +35,43 @@ export function NotificationsSection({
   restartActionStateForNote,
   onToggleCollapsed,
   onRequestMinerCommandConfirm,
+  containerSx,
+  horizontalCollapse = false,
 }: NotificationsSectionProps) {
+  const restartButtonSx = {
+    borderRadius: "8px !important",
+    minWidth: 86,
+    textTransform: "none",
+    fontWeight: 700,
+    "&.Mui-disabled": {
+      bgcolor: "transparent",
+      color: "#9ca3af",
+      borderColor: "#d1d5db",
+    },
+  } as const;
+
+  if (horizontalCollapse && notificationsCollapsed) {
+    return (
+      <Paper sx={{ p: 0.8, height: "100%", ...containerSx }}>
+        <Stack
+          alignItems="center"
+          justifyContent="flex-start"
+          spacing={0.5}
+          sx={{ cursor: "pointer", pt: 0.3 }}
+          onClick={onToggleCollapsed}
+        >
+          {bellIcon}
+          <Typography variant="caption" fontWeight={800}>
+            {groupedNotificationsCount}
+          </Typography>
+          <Typography variant="subtitle2" color="text.secondary">▸</Typography>
+        </Stack>
+      </Paper>
+    );
+  }
+
   return (
-    <Paper sx={{ p: 1.25 }}>
+    <Paper sx={{ p: 1.25, height: "100%", ...containerSx }}>
       <Stack
         direction="row"
         alignItems="center"
@@ -52,7 +89,7 @@ export function NotificationsSection({
       </Stack>
 
       <Collapse in={!notificationsCollapsed}>
-        <Stack spacing={0.75} sx={{ maxHeight: 240, overflow: "auto", mt: 1 }}>
+        <Stack spacing={0.75} sx={{ mt: 1 }}>
           {visibleGroupedNotifications.length === 0 && (
             <Typography variant="body2">{t(uiLang, "no_notifications")}</Typography>
           )}
@@ -85,6 +122,7 @@ export function NotificationsSection({
                       variant={restartAction.enabled ? "contained" : "outlined"}
                       color={restartAction.enabled ? "primary" : "inherit"}
                       disabled={!restartAction.enabled}
+                      sx={restartButtonSx}
                       title={restartAction.title}
                       onClick={() => onRequestMinerCommandConfirm(note.minerId!, "RESTART")}
                     >

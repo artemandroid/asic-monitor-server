@@ -3,6 +3,9 @@ import { memorySettings } from "./store";
 
 export type SettingsPayload = {
   autoRestartEnabled?: boolean;
+  minerSyncIntervalSec?: number;
+  deyeSyncIntervalSec?: number;
+  tuyaSyncIntervalSec?: number;
   restartDelayMinutes?: number;
   postRestartGraceMinutes?: number;
   lowHashrateThresholdGh?: number;
@@ -10,6 +13,7 @@ export type SettingsPayload = {
   notifyAutoRestart?: boolean;
   notifyRestartPrompt?: boolean;
   notificationVisibleCount?: number;
+  criticalBatteryOffPercent?: number;
 };
 
 export async function getSettings() {
@@ -29,6 +33,9 @@ export async function updateSettings(payload: SettingsPayload) {
       where: { id: 1 },
       data: {
         autoRestartEnabled: payload.autoRestartEnabled,
+        minerSyncIntervalSec: payload.minerSyncIntervalSec,
+        deyeSyncIntervalSec: payload.deyeSyncIntervalSec,
+        tuyaSyncIntervalSec: payload.tuyaSyncIntervalSec,
         restartDelayMinutes: payload.restartDelayMinutes,
         postRestartGraceMinutes: payload.postRestartGraceMinutes,
         lowHashrateThresholdGh: payload.lowHashrateThresholdGh,
@@ -36,11 +43,21 @@ export async function updateSettings(payload: SettingsPayload) {
         notifyAutoRestart: payload.notifyAutoRestart,
         notifyRestartPrompt: payload.notifyRestartPrompt,
         notificationVisibleCount: payload.notificationVisibleCount,
+        criticalBatteryOffPercent: payload.criticalBatteryOffPercent,
       },
     });
   } catch {
     if (typeof payload.autoRestartEnabled === "boolean") {
       memorySettings.autoRestartEnabled = payload.autoRestartEnabled;
+    }
+    if (typeof payload.minerSyncIntervalSec === "number") {
+      memorySettings.minerSyncIntervalSec = payload.minerSyncIntervalSec;
+    }
+    if (typeof payload.deyeSyncIntervalSec === "number") {
+      memorySettings.deyeSyncIntervalSec = payload.deyeSyncIntervalSec;
+    }
+    if (typeof payload.tuyaSyncIntervalSec === "number") {
+      memorySettings.tuyaSyncIntervalSec = payload.tuyaSyncIntervalSec;
     }
     if (typeof payload.restartDelayMinutes === "number") {
       memorySettings.restartDelayMinutes = payload.restartDelayMinutes;
@@ -62,6 +79,9 @@ export async function updateSettings(payload: SettingsPayload) {
     }
     if (typeof payload.notificationVisibleCount === "number") {
       memorySettings.notificationVisibleCount = payload.notificationVisibleCount;
+    }
+    if (typeof payload.criticalBatteryOffPercent === "number") {
+      memorySettings.criticalBatteryOffPercent = payload.criticalBatteryOffPercent;
     }
     return memorySettings;
   }

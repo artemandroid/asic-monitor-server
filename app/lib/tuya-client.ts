@@ -100,12 +100,23 @@ async function tuyaRequest<T>({
   if (accessToken) headers.access_token = accessToken;
   if (method === "POST") headers["Content-Type"] = "application/json";
 
-  const resp = await fetch(`${baseUrl}${pathWithQuery}`, {
-    method,
-    headers,
-    body: method === "POST" ? bodyText : undefined,
-    cache: "no-store",
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`${baseUrl}${pathWithQuery}`, {
+      method,
+      headers,
+      body: method === "POST" ? bodyText : undefined,
+      cache: "no-store",
+    });
+  } catch (error) {
+    const detail =
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error);
+    throw new Error(
+      `Tuya network error while ${method} ${pathWithQuery}: ${detail}. Base URL: ${baseUrl}`,
+    );
+  }
   const json = (await resp.json().catch(() => ({}))) as TuyaApiResponse<T>;
   if (!resp.ok || json.success === false) {
     const code = json.code ?? resp.status;

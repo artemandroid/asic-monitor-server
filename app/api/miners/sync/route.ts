@@ -112,7 +112,12 @@ export async function POST(request: NextRequest) {
         autoPowerOffGridLoss: existing?.autoPowerOffGridLoss ?? false,
         boundTuyaDeviceId: existing?.boundTuyaDeviceId ?? null,
         autoPowerOffGenerationBelowKw: existing?.autoPowerOffGenerationBelowKw ?? null,
+        autoPowerOnGenerationAboveKw: existing?.autoPowerOnGenerationAboveKw ?? null,
         autoPowerOffBatteryBelowPercent: existing?.autoPowerOffBatteryBelowPercent ?? null,
+        autoPowerOnBatteryAbovePercent:
+          existing?.autoPowerOnBatteryAbovePercent ??
+          existing?.autoPowerOffBatteryBelowPercent ??
+          null,
         autoPowerRestoreDelayMinutes: existing?.autoPowerRestoreDelayMinutes ?? 10,
         overheatProtectionEnabled: existing?.overheatProtectionEnabled ?? true,
         overheatShutdownTempC: existing?.overheatShutdownTempC ?? 84,

@@ -27,7 +27,9 @@ model Miner {
   autoPowerOffGridLoss Boolean @default(false)
   boundTuyaDeviceId     String?
   autoPowerOffGenerationBelowKw Float?
+  autoPowerOnGenerationAboveKw Float?
   autoPowerOffBatteryBelowPercent Float?
+  autoPowerOnBatteryAbovePercent Float?
   autoPowerRestoreDelayMinutes Int @default(10)
   overheatProtectionEnabled Boolean @default(true)
   overheatShutdownTempC Float @default(84)
@@ -59,6 +61,9 @@ model Command {
 model Settings {
   id                       Int      @id @default(1)
   autoRestartEnabled       Boolean  @default(true)
+  minerSyncIntervalSec     Int      @default(60)
+  deyeSyncIntervalSec      Int      @default(60)
+  tuyaSyncIntervalSec      Int      @default(60)
   restartDelayMinutes      Int      @default(10)
   postRestartGraceMinutes  Int      @default(10)
   lowHashrateThresholdGh   Float    @default(10)
@@ -66,6 +71,7 @@ model Settings {
   notifyAutoRestart        Boolean  @default(true)
   notifyRestartPrompt      Boolean  @default(true)
   notificationVisibleCount Int      @default(2)
+  criticalBatteryOffPercent Float   @default(30)
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 }

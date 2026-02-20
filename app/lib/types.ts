@@ -16,6 +16,7 @@ export type MinerMetric = {
   boardStates?: string[];
   statesOk?: boolean;
   hashrateRealtime?: number;
+  minerMode?: number;
   hashrateAverage?: number;
   runtimeSeconds?: number;
   poolRejectionRate?: number;
@@ -41,7 +42,9 @@ export type MinerState = {
   autoPowerOffGridLoss?: boolean;
   boundTuyaDeviceId?: string | null;
   autoPowerOffGenerationBelowKw?: number | null;
+  autoPowerOnGenerationAboveKw?: number | null;
   autoPowerOffBatteryBelowPercent?: number | null;
+  autoPowerOnBatteryAbovePercent?: number | null;
   autoPowerRestoreDelayMinutes?: number;
   overheatProtectionEnabled?: boolean;
   overheatShutdownTempC?: number | null;
@@ -67,6 +70,9 @@ export type Command = {
 
 export type Settings = {
   autoRestartEnabled: boolean;
+  minerSyncIntervalSec: number;
+  deyeSyncIntervalSec: number;
+  tuyaSyncIntervalSec: number;
   restartDelayMinutes: number;
   postRestartGraceMinutes: number;
   lowHashrateThresholdGh: number;
@@ -74,6 +80,7 @@ export type Settings = {
   notifyAutoRestart: boolean;
   notifyRestartPrompt: boolean;
   notificationVisibleCount: number;
+  criticalBatteryOffPercent: number;
 };
 
 export type Notification = {

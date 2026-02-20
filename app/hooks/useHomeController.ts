@@ -10,25 +10,31 @@ import type {
   Notification,
 } from "@/app/lib/types";
 
-const REFRESH_MS = 5000;
-const DEYE_REFRESH_MS = 60_000;
-const TUYA_REFRESH_MS = 60_000;
+const DEFAULT_MINER_SYNC_MS = 60_000;
+const DEFAULT_DEYE_SYNC_MS = 60_000;
+const DEFAULT_TUYA_SYNC_MS = 60_000;
 const LOW_HASHRATE_RESTART_GRACE_MS = 10 * 60 * 1000;
 const CONTROL_ACTION_LOCK_MS = 10 * 60 * 1000;
 const NOTIFICATION_VISIBLE_COUNT_KEY = "mc_notification_visible_count";
+const BOARD_COUNT_BY_MINER_KEY = "mc_board_count_by_miner";
 
 type MinerControlPhase = "RESTARTING" | "SLEEPING" | "WAKING" | "WARMING_UP";
 type MinerControlState = {
   phase: MinerControlPhase;
   since: number;
+  source?: "RESTART" | "WAKE" | "POWER_ON";
 };
 
 type GeneralSettings = {
+  minerSyncIntervalSec: number;
+  deyeSyncIntervalSec: number;
+  tuyaSyncIntervalSec: number;
   restartDelayMinutes: number;
   hashrateDeviationPercent: number;
   notifyAutoRestart: boolean;
   notifyRestartPrompt: boolean;
   notificationVisibleCount: number;
+  criticalBatteryOffPercent: number;
 };
 
 type MinerSettingsPanel = {
@@ -39,7 +45,9 @@ type MinerSettingsPanel = {
   autoPowerOnGridRestore: boolean;
   autoPowerOffGridLoss: boolean;
   autoPowerOffGenerationBelowKw: number | null;
+  autoPowerOnGenerationAboveKw: number | null;
   autoPowerOffBatteryBelowPercent: number | null;
+  autoPowerOnBatteryAbovePercent: number | null;
   autoPowerRestoreDelayMinutes: number;
   overheatProtectionEnabled: boolean;
   overheatShutdownTempC: number;
@@ -55,7 +63,15 @@ type DeyeStationSnapshot = {
   gridStateText: string | null;
   gridPowerKw: number | null;
   gridSignals: {
-    source: "flag" | "text" | "power" | "charging_fallback" | "none";
+    source:
+      | "wire_power"
+      | "flag"
+      | "text"
+      | "power"
+      | "charging_fallback"
+      | "discharging_fallback"
+      | "cached_previous"
+      | "none";
     flag: {
       key: string | null;
       raw: string | number | boolean | null;
@@ -73,11 +89,16 @@ type DeyeStationSnapshot = {
       parsed: boolean | null;
     };
     chargingFallbackParsed: boolean | null;
+    dischargingFallbackParsed: boolean | null;
   };
   batterySoc: number | null;
   batteryStatus: string | null;
   batteryDischargePowerKw: number | null;
   generationPowerKw: number | null;
+  apiSignals: Array<{
+    key: string;
+    value: string | number | boolean | null;
+  }>;
   updatedAt: string;
   error?: string;
 };
@@ -103,6 +124,41 @@ type TuyaSnapshot = {
 type PendingConfirmAction =
   | { kind: "MINER_COMMAND"; minerId: string; command: CommandType }
   | { kind: "TUYA_SWITCH"; device: TuyaDevice; on: boolean };
+
+function extractBoardCount(metric: unknown): number {
+  if (!metric || typeof metric !== "object") return 0;
+  const m = metric as {
+    boardChips?: unknown[];
+    boardHwErrors?: unknown[];
+    boardFreqs?: unknown[];
+    boardHashrates?: unknown[];
+    boardTheoreticalHashrates?: unknown[];
+    boardInletTemps?: unknown[];
+    boardOutletTemps?: unknown[];
+    boardStates?: unknown[];
+  };
+
+  const chainIndexMax = Array.isArray(m.boardStates)
+    ? m.boardStates.reduce((max, state) => {
+        if (typeof state !== "string") return max;
+        const hit = /^chain(\d+):/i.exec(state.trim());
+        if (!hit) return max;
+        const idx = Number.parseInt(hit[1], 10);
+        return Number.isFinite(idx) ? Math.max(max, idx + 1) : max;
+      }, 0)
+    : 0;
+
+  return Math.max(
+    Array.isArray(m.boardChips) ? m.boardChips.length : 0,
+    Array.isArray(m.boardHwErrors) ? m.boardHwErrors.length : 0,
+    Array.isArray(m.boardFreqs) ? m.boardFreqs.length : 0,
+    Array.isArray(m.boardHashrates) ? m.boardHashrates.length : 0,
+    Array.isArray(m.boardTheoreticalHashrates) ? m.boardTheoreticalHashrates.length : 0,
+    Array.isArray(m.boardInletTemps) ? m.boardInletTemps.length : 0,
+    Array.isArray(m.boardOutletTemps) ? m.boardOutletTemps.length : 0,
+    chainIndexMax,
+  );
+}
 
 export function useHomeController() {
   const router = useRouter();
@@ -133,6 +189,11 @@ export function useHomeController() {
   const [generalSettingsDraft, setGeneralSettingsDraft] = useState<GeneralSettings | null>(null);
   const [generalSettingsSaving, setGeneralSettingsSaving] = useState(false);
   const [notificationVisibleCount, setNotificationVisibleCount] = useState(2);
+  const [minerSyncMs, setMinerSyncMs] = useState(DEFAULT_MINER_SYNC_MS);
+  const [deyeSyncMs, setDeyeSyncMs] = useState(DEFAULT_DEYE_SYNC_MS);
+  const [tuyaSyncMs, setTuyaSyncMs] = useState(DEFAULT_TUYA_SYNC_MS);
+  const [boardCountByMiner, setBoardCountByMiner] = useState<Record<string, number>>({});
+  const [boardCountLoaded, setBoardCountLoaded] = useState(false);
   const [activeMinerSettingsId, setActiveMinerSettingsId] = useState<string | null>(null);
   const [minerSettingsDraft, setMinerSettingsDraft] = useState<MinerSettingsPanel | null>(null);
   const [minerSettingsSaving, setMinerSettingsSaving] = useState(false);
@@ -157,6 +218,7 @@ export function useHomeController() {
   const refreshMainRef = useRef<() => Promise<void>>(async () => {});
   const fetchDeyeStationRef = useRef<() => Promise<void>>(async () => {});
   const fetchTuyaDevicesRef = useRef<() => Promise<void>>(async () => {});
+  const processedCommandResultIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setUiLang(readUiLang());
@@ -341,6 +403,35 @@ export function useHomeController() {
   }, [notificationVisibleCount]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(BOARD_COUNT_BY_MINER_KEY);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, number>;
+        if (parsed && typeof parsed === "object") {
+          const next: Record<string, number> = {};
+          for (const [minerId, count] of Object.entries(parsed)) {
+            const num = Number(count);
+            if (Number.isFinite(num) && num > 0) {
+              next[minerId] = Math.floor(num);
+            }
+          }
+          setBoardCountByMiner(next);
+        }
+      } catch {
+        // ignore corrupted storage
+      }
+    }
+    setBoardCountLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!boardCountLoaded) return;
+    window.localStorage.setItem(BOARD_COUNT_BY_MINER_KEY, JSON.stringify(boardCountByMiner));
+  }, [boardCountByMiner, boardCountLoaded]);
+
+  useEffect(() => {
     const grid = minerGridRef.current;
     if (!grid || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((entries) => {
@@ -369,9 +460,23 @@ export function useHomeController() {
       try {
         const res = await fetch("/api/settings", { cache: "no-store" });
         if (!res.ok) return;
-        const data = (await res.json()) as { notificationVisibleCount?: number };
+        const data = (await res.json()) as {
+          notificationVisibleCount?: number;
+          minerSyncIntervalSec?: number;
+          deyeSyncIntervalSec?: number;
+          tuyaSyncIntervalSec?: number;
+        };
         if (typeof data.notificationVisibleCount === "number" && data.notificationVisibleCount >= 1) {
           setNotificationVisibleCount(Math.floor(data.notificationVisibleCount));
+        }
+        if (typeof data.minerSyncIntervalSec === "number" && data.minerSyncIntervalSec >= 5) {
+          setMinerSyncMs(Math.floor(data.minerSyncIntervalSec) * 1000);
+        }
+        if (typeof data.deyeSyncIntervalSec === "number" && data.deyeSyncIntervalSec >= 5) {
+          setDeyeSyncMs(Math.floor(data.deyeSyncIntervalSec) * 1000);
+        }
+        if (typeof data.tuyaSyncIntervalSec === "number" && data.tuyaSyncIntervalSec >= 5) {
+          setTuyaSyncMs(Math.floor(data.tuyaSyncIntervalSec) * 1000);
         }
       } catch {
         // ignore
@@ -473,6 +578,16 @@ export function useHomeController() {
         shouldBeep = true;
       }
       setMiners(data);
+      setBoardCountByMiner((prev) => {
+        const next = { ...prev };
+        for (const miner of data) {
+          const count = extractBoardCount(miner.lastMetric);
+          if (count > 0) {
+            next[miner.minerId] = Math.max(next[miner.minerId] ?? 0, count);
+          }
+        }
+        return next;
+      });
       setTuyaBindingByMiner(() => {
         const next: Record<string, string> = {};
         for (const miner of data) {
@@ -526,22 +641,11 @@ export function useHomeController() {
     expectedHashrate?: number;
     hashrate?: number;
     hashrateRealtime?: number;
+    minerMode?: number;
     online?: boolean;
   } | null): boolean => {
     if (!metric) return false;
-    if (metric.online === false) return true;
-    if (
-      typeof metric.expectedHashrate !== "number" ||
-      metric.expectedHashrate <= 0
-    ) {
-      return false;
-    }
-    if (typeof metric.hashrateRealtime !== "number") {
-      return false;
-    }
-    const realtimeMh =
-      metric.hashrateRealtime > 500 ? metric.hashrateRealtime : metric.hashrateRealtime * 1000;
-    return realtimeMh <= metric.expectedHashrate * 0.05;
+    return metric.minerMode === 1;
   };
 
   const reconcileControlStates = (data: MinerState[]) => {
@@ -558,6 +662,7 @@ export function useHomeController() {
               expectedHashrate?: number;
               hashrate?: number;
               hashrateRealtime?: number;
+              minerMode?: number;
               online?: boolean;
             }
           | null;
@@ -571,8 +676,12 @@ export function useHomeController() {
         }
 
         if (current.phase === "RESTARTING") {
+          if (!online) {
+            changed = true;
+            continue;
+          }
           if (online && !ready) {
-            next[miner.minerId] = { phase: "WARMING_UP", since: current.since };
+            next[miner.minerId] = { phase: "WARMING_UP", since: current.since, source: current.source };
             changed = true;
             continue;
           }
@@ -585,8 +694,12 @@ export function useHomeController() {
         }
 
         if (current.phase === "WAKING") {
+          if (!online) {
+            changed = true;
+            continue;
+          }
           if (online && !ready) {
-            next[miner.minerId] = { phase: "WARMING_UP", since: current.since };
+            next[miner.minerId] = { phase: "WARMING_UP", since: current.since, source: current.source };
             changed = true;
             continue;
           }
@@ -599,6 +712,10 @@ export function useHomeController() {
         }
 
         if (current.phase === "WARMING_UP") {
+          if (!online) {
+            changed = true;
+            continue;
+          }
           if (ready) {
             changed = true;
             continue;
@@ -750,6 +867,7 @@ export function useHomeController() {
           [linkedMinerId]: {
             phase: on ? "WARMING_UP" : "SLEEPING",
             since: Date.now(),
+            source: on ? "POWER_ON" : undefined,
           },
         }));
       }
@@ -821,13 +939,23 @@ export function useHomeController() {
         throw new Error(`Failed to fetch settings: ${res.status}`);
       }
       const data = (await res.json()) as {
+        minerSyncIntervalSec?: number;
+        deyeSyncIntervalSec?: number;
+        tuyaSyncIntervalSec?: number;
         restartDelayMinutes: number;
         hashrateDeviationPercent: number;
         notifyAutoRestart: boolean;
         notifyRestartPrompt: boolean;
         notificationVisibleCount?: number;
+        criticalBatteryOffPercent?: number;
       };
       setGeneralSettingsDraft({
+        minerSyncIntervalSec:
+          typeof data.minerSyncIntervalSec === "number" ? data.minerSyncIntervalSec : 60,
+        deyeSyncIntervalSec:
+          typeof data.deyeSyncIntervalSec === "number" ? data.deyeSyncIntervalSec : 60,
+        tuyaSyncIntervalSec:
+          typeof data.tuyaSyncIntervalSec === "number" ? data.tuyaSyncIntervalSec : 60,
         restartDelayMinutes: data.restartDelayMinutes,
         hashrateDeviationPercent: data.hashrateDeviationPercent,
         notifyAutoRestart: data.notifyAutoRestart,
@@ -836,6 +964,10 @@ export function useHomeController() {
           typeof data.notificationVisibleCount === "number"
             ? data.notificationVisibleCount
             : notificationVisibleCount,
+        criticalBatteryOffPercent:
+          typeof data.criticalBatteryOffPercent === "number"
+            ? data.criticalBatteryOffPercent
+            : 30,
       });
       setShowGeneralSettings(true);
     } catch (err) {
@@ -856,12 +988,32 @@ export function useHomeController() {
       if (!res.ok) {
         throw new Error(`Failed to update settings: ${res.status}`);
       }
-      const updated = (await res.json().catch(() => ({}))) as { notificationVisibleCount?: number };
+      const updated = (await res.json().catch(() => ({}))) as {
+        notificationVisibleCount?: number;
+        minerSyncIntervalSec?: number;
+        deyeSyncIntervalSec?: number;
+        tuyaSyncIntervalSec?: number;
+      };
       const savedCount =
         typeof updated.notificationVisibleCount === "number"
           ? updated.notificationVisibleCount
           : generalSettingsDraft.notificationVisibleCount;
       setNotificationVisibleCount(Math.max(1, Math.floor(savedCount)));
+      const savedMinerSyncSec =
+        typeof updated.minerSyncIntervalSec === "number"
+          ? updated.minerSyncIntervalSec
+          : generalSettingsDraft.minerSyncIntervalSec;
+      const savedDeyeSyncSec =
+        typeof updated.deyeSyncIntervalSec === "number"
+          ? updated.deyeSyncIntervalSec
+          : generalSettingsDraft.deyeSyncIntervalSec;
+      const savedTuyaSyncSec =
+        typeof updated.tuyaSyncIntervalSec === "number"
+          ? updated.tuyaSyncIntervalSec
+          : generalSettingsDraft.tuyaSyncIntervalSec;
+      setMinerSyncMs(Math.max(5, Math.floor(savedMinerSyncSec)) * 1000);
+      setDeyeSyncMs(Math.max(5, Math.floor(savedDeyeSyncSec)) * 1000);
+      setTuyaSyncMs(Math.max(5, Math.floor(savedTuyaSyncSec)) * 1000);
       setShowGeneralSettings(false);
       setGeneralSettingsDraft(null);
     } catch (err) {
@@ -885,6 +1037,16 @@ export function useHomeController() {
       const data = (await res.json()) as MinerSettingsPanel;
       setMinerSettingsDraft({
         ...data,
+        autoPowerOnBatteryAbovePercent:
+          typeof data.autoPowerOnBatteryAbovePercent === "number"
+            ? data.autoPowerOnBatteryAbovePercent
+            : typeof data.autoPowerOffBatteryBelowPercent === "number"
+              ? data.autoPowerOffBatteryBelowPercent
+              : null,
+        autoPowerOnGenerationAboveKw:
+          typeof data.autoPowerOnGenerationAboveKw === "number"
+            ? data.autoPowerOnGenerationAboveKw
+            : null,
         autoPowerRestoreDelayMinutes:
           typeof data.autoPowerRestoreDelayMinutes === "number"
             ? data.autoPowerRestoreDelayMinutes
@@ -911,6 +1073,19 @@ export function useHomeController() {
 
   const saveMinerSettings = async () => {
     if (!minerSettingsDraft) return;
+    const offThreshold = minerSettingsDraft.autoPowerOffBatteryBelowPercent;
+    const onThreshold =
+      minerSettingsDraft.autoPowerOnBatteryAbovePercent ??
+      minerSettingsDraft.autoPowerOffBatteryBelowPercent ??
+      null;
+    if (
+      typeof offThreshold === "number" &&
+      typeof onThreshold === "number" &&
+      onThreshold < offThreshold
+    ) {
+      pushClientNotification("Auto ON battery threshold must be >= Auto OFF battery threshold.");
+      return;
+    }
     setMinerSettingsSaving(true);
     try {
       const res = await fetch(
@@ -925,7 +1100,9 @@ export function useHomeController() {
             autoPowerOnGridRestore: minerSettingsDraft.autoPowerOnGridRestore,
             autoPowerOffGridLoss: minerSettingsDraft.autoPowerOffGridLoss,
             autoPowerOffGenerationBelowKw: minerSettingsDraft.autoPowerOffGenerationBelowKw,
+            autoPowerOnGenerationAboveKw: minerSettingsDraft.autoPowerOnGenerationAboveKw,
             autoPowerOffBatteryBelowPercent: minerSettingsDraft.autoPowerOffBatteryBelowPercent,
+            autoPowerOnBatteryAbovePercent: minerSettingsDraft.autoPowerOnBatteryAbovePercent,
             autoPowerRestoreDelayMinutes: minerSettingsDraft.autoPowerRestoreDelayMinutes,
             overheatProtectionEnabled: minerSettingsDraft.overheatProtectionEnabled,
             overheatShutdownTempC: minerSettingsDraft.overheatShutdownTempC,
@@ -937,7 +1114,7 @@ export function useHomeController() {
       }
       setActiveMinerSettingsId(null);
       setMinerSettingsDraft(null);
-      await fetchMiners();
+      void fetchMiners();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       pushClientNotification(message);
@@ -982,14 +1159,20 @@ export function useHomeController() {
         body: JSON.stringify({ minerId, type }),
       });
       if (!res.ok) {
-        throw new Error(`Failed to create command: ${res.status}`);
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error ?? `Failed to create command: ${res.status}`);
       }
-      if (type === "RESTART" || type === "SLEEP" || type === "WAKE") {
-        const phase: MinerControlPhase =
-          type === "RESTART" ? "RESTARTING" : type === "SLEEP" ? "SLEEPING" : "WAKING";
+      if (type === "SLEEP") {
         setMinerControlStates((prev) => ({
           ...prev,
-          [minerId]: { phase, since: Date.now() },
+          [minerId]: { phase: "SLEEPING", since: Date.now() },
+        }));
+      } else if (type === "RESTART" || type === "WAKE") {
+        const phase: MinerControlPhase =
+          type === "RESTART" ? "RESTARTING" : "WAKING";
+        setMinerControlStates((prev) => ({
+          ...prev,
+          [minerId]: { phase, since: Date.now(), source: type },
         }));
       }
       await fetchMiners();
@@ -1060,27 +1243,27 @@ export function useHomeController() {
     void refreshMainRef.current();
     const id = setInterval(() => {
       void refreshMainRef.current();
-    }, REFRESH_MS);
+    }, minerSyncMs);
     return () => clearInterval(id);
-  }, [authChecked]);
+  }, [authChecked, minerSyncMs]);
 
   useEffect(() => {
     if (!authChecked) return;
     void fetchDeyeStationRef.current();
     const id = setInterval(() => {
       void fetchDeyeStationRef.current();
-    }, DEYE_REFRESH_MS);
+    }, deyeSyncMs);
     return () => clearInterval(id);
-  }, [authChecked]);
+  }, [authChecked, deyeSyncMs]);
 
   useEffect(() => {
     if (!authChecked) return;
     void fetchTuyaDevicesRef.current();
     const id = setInterval(() => {
       void fetchTuyaDevicesRef.current();
-    }, TUYA_REFRESH_MS);
+    }, tuyaSyncMs);
     return () => clearInterval(id);
-  }, [authChecked]);
+  }, [authChecked, tuyaSyncMs]);
 
   type DisplayNotification = Notification & { count?: number };
 
@@ -1181,7 +1364,6 @@ export function useHomeController() {
   };
 
   const localizeNotificationMessage = (message: string): string => {
-    if (uiLang !== "uk") return message;
     const autoRestart = /^Hashrate on (.+) dropped to ([\d.]+) GH\/s\. Auto-restart issued\.$/.exec(message);
     if (autoRestart) {
       return t(uiLang, "hashrate_dropped_auto_restart_issued", {
@@ -1210,6 +1392,53 @@ export function useHomeController() {
         limitC: overheat[3],
       });
     }
+    const boardDrift = /^Board hashrate drift on (.+): (.+)\.$/.exec(message);
+    if (boardDrift) {
+      return t(uiLang, "board_hashrate_drift_detected", {
+        minerId: boardDrift[1],
+        summary: boardDrift[2],
+      });
+    }
+    const commandSuccess = /^Command (RESTART|SLEEP|WAKE|RELOAD_CONFIG) succeeded on (.+)\.$/.exec(message);
+    if (commandSuccess) {
+      return t(uiLang, "command_succeeded_on_miner", {
+        command: commandSuccess[1],
+        minerId: commandSuccess[2],
+      });
+    }
+    const commandFailed = /^Command (RESTART|SLEEP|WAKE|RELOAD_CONFIG) failed on (.+?)(?:: (.+))?\.$/.exec(message);
+    if (commandFailed) {
+      return t(uiLang, "command_failed_on_miner", {
+        command: commandFailed[1],
+        minerId: commandFailed[2],
+        reason: commandFailed[3] ? `: ${commandFailed[3]}` : "",
+      });
+    }
+    const autoOffCritical = /^Auto OFF requested for (.+): grid is OFF and battery < ([\d.]+)%\.$/.exec(message);
+    if (autoOffCritical) {
+      return t(uiLang, "auto_off_requested_battery_critical", {
+        deviceName: autoOffCritical[1],
+        threshold: autoOffCritical[2],
+      });
+    }
+    const autoOff = /^Auto OFF requested for (.+)\.$/.exec(message);
+    if (autoOff) {
+      return t(uiLang, "auto_off_requested_generic", {
+        deviceName: autoOff[1],
+      });
+    }
+    const autoOnGrid = /^Auto ON requested for (.+) because grid is available\.$/.exec(message);
+    if (autoOnGrid) {
+      return t(uiLang, "auto_on_requested_grid_available", {
+        deviceName: autoOnGrid[1],
+      });
+    }
+    const autoOnDelay = /^Auto ON requested for (.+) after threshold recovery delay\.$/.exec(message);
+    if (autoOnDelay) {
+      return t(uiLang, "auto_on_requested_after_delay", {
+        deviceName: autoOnDelay[1],
+      });
+    }
     return message;
   };
 
@@ -1225,6 +1454,58 @@ export function useHomeController() {
   for (const [minerId, deviceId] of Object.entries(tuyaBindingByMiner)) {
     if (deviceId) deviceToMiner.set(deviceId, minerId);
   }
+
+  useEffect(() => {
+    const all = [...clientNotifications, ...notifications];
+    if (all.length === 0) return;
+    const now = Date.now();
+    for (const note of all) {
+      if (note.type !== "COMMAND_RESULT" || !note.id || !note.minerId) continue;
+      if (processedCommandResultIdsRef.current.has(note.id)) continue;
+      processedCommandResultIdsRef.current.add(note.id);
+
+      const msg = String(note.message ?? "");
+      const ok = msg.includes("succeeded on");
+      const failed = msg.includes("failed on");
+      const sleepCmd = msg.includes("Command SLEEP ");
+      const wakeCmd = msg.includes("Command WAKE ");
+      const restartCmd = msg.includes("Command RESTART ");
+      if (!ok && !failed) continue;
+
+      if (ok && sleepCmd) {
+        setMinerControlStates((prev) => ({
+          ...prev,
+          [note.minerId!]: { phase: "SLEEPING", since: now },
+        }));
+        continue;
+      }
+
+      if (ok && wakeCmd) {
+        setMinerControlStates((prev) => ({
+          ...prev,
+          [note.minerId!]: { phase: "WARMING_UP", since: now, source: "WAKE" },
+        }));
+        continue;
+      }
+
+      if (ok && restartCmd) {
+        setMinerControlStates((prev) => ({
+          ...prev,
+          [note.minerId!]: { phase: "WARMING_UP", since: now, source: "RESTART" },
+        }));
+        continue;
+      }
+
+      if (failed && (sleepCmd || wakeCmd || restartCmd)) {
+        setMinerControlStates((prev) => {
+          if (!prev[note.minerId!]) return prev;
+          const next = { ...prev };
+          delete next[note.minerId!];
+          return next;
+        });
+      }
+    }
+  }, [notifications, clientNotifications]);
   const hasAnyBinding = Object.keys(tuyaBindingByMiner).length > 0;
   const visibleTuyaDevices = (tuyaData?.devices ?? []).filter(
     (d) => !hideUnboundAutomats || !hasAnyBinding || deviceToMiner.has(d.id),
@@ -1328,12 +1609,12 @@ export function useHomeController() {
   const kwUnit = t(uiLang, "kw");
   const batteryColor =
     batteryMode === "charging"
-      ? "#16a34a"
+      ? "#86efac"
       : batteryMode === "discharging"
-        ? "#f59e0b"
-        : batteryMode === "idle"
-          ? "#64748b"
-          : "#94a3b8";
+        ? "#ef4444"
+        : typeof deyeStation?.batterySoc === "number" && deyeStation.batterySoc >= 99
+          ? "#60a5fa"
+          : "#64748b";
   const batteryFill =
     typeof deyeStation?.batterySoc === "number"
       ? Math.max(6, Math.min(100, deyeStation.batterySoc))
@@ -1399,6 +1680,7 @@ export function useHomeController() {
     pendingActionByMiner,
     deviceById,
     statusBadgesVertical,
+    boardCountByMiner,
     editingAliasFor,
     aliasDraft,
     setAliasDraft,

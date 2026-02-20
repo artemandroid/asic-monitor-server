@@ -1,8 +1,7 @@
+import SolarPowerRoundedIcon from "@mui/icons-material/SolarPowerRounded";
 import {
   Box,
   Chip,
-  Collapse,
-  Grid,
   Paper,
   Stack,
   Typography,
@@ -15,7 +14,15 @@ type DeyeStationSnapshot = {
   gridStateText: string | null;
   gridPowerKw: number | null;
   gridSignals: {
-    source: "flag" | "text" | "power" | "charging_fallback" | "none";
+    source:
+      | "wire_power"
+      | "flag"
+      | "text"
+      | "power"
+      | "charging_fallback"
+      | "discharging_fallback"
+      | "cached_previous"
+      | "none";
     flag: {
       key: string | null;
       raw: string | number | boolean | null;
@@ -33,11 +40,16 @@ type DeyeStationSnapshot = {
       parsed: boolean | null;
     };
     chargingFallbackParsed: boolean | null;
+    dischargingFallbackParsed: boolean | null;
   };
   batterySoc: number | null;
   batteryStatus: string | null;
   batteryDischargePowerKw: number | null;
   generationPowerKw: number | null;
+  apiSignals: Array<{
+    key: string;
+    value: string | number | boolean | null;
+  }>;
   updatedAt: string;
   error?: string;
 };
@@ -115,26 +127,59 @@ export function DeyeStationSection({
   formatUpdatedAt,
   onToggleCollapsed,
 }: DeyeStationSectionProps) {
+  const positiveGreen = "#86efac";
+  const neutralGray = "#64748b";
+  const fullBlue = "#60a5fa";
+  const negativeRed = "#ef4444";
   const formatGridParsed = (value: boolean | null) =>
     value === true ? t(uiLang, "connected") : value === false ? t(uiLang, "disconnected") : t(uiLang, "unknown");
 
   const gridStatusLabel = formatGridParsed(deyeStation?.gridOnline ?? null);
-  const gridStatusColor = deyeStation?.gridOnline === true
+  const gridStatusColor: "success" | "default" = deyeStation?.gridOnline === true
     ? "success"
-    : deyeStation?.gridOnline === false
-      ? "error"
-      : "default";
+    : "default";
+  const gridStatusVariant: "filled" | "outlined" =
+    deyeStation?.gridOnline === true ? "filled" : "outlined";
 
-  const gridSourceLabel =
-    deyeStation?.gridSignals.source === "flag"
-      ? t(uiLang, "grid_source_flag")
-      : deyeStation?.gridSignals.source === "text"
-        ? t(uiLang, "grid_source_text")
-        : deyeStation?.gridSignals.source === "power"
-          ? t(uiLang, "grid_source_power")
-          : deyeStation?.gridSignals.source === "charging_fallback"
-            ? t(uiLang, "grid_source_charging_fallback")
-            : t(uiLang, "grid_source_none");
+  const signalRows = (deyeStation?.apiSignals ?? []).map((signal) => ({
+    key: signal.key,
+    value:
+      signal.value === null
+        ? "null"
+        : typeof signal.value === "boolean"
+          ? signal.value ? "true" : "false"
+        : String(signal.value),
+  }));
+  const batteryPowerKw = deyeStation?.batteryDischargePowerKw ?? null;
+  const showBatteryPower =
+    typeof batteryPowerKw === "number" && Number.isFinite(batteryPowerKw) && Math.abs(batteryPowerKw) > 0.01;
+  const batteryPowerText = `${showBatteryPower ? Math.abs(batteryPowerKw).toFixed(2) : "0.00"} ${kwUnit}`;
+  const isCharging = batteryMode === "charging";
+  const isDischarging = batteryMode === "discharging";
+  const batterySoc = deyeStation?.batterySoc ?? null;
+  const batteryFull = typeof batterySoc === "number" && batterySoc >= 99;
+  const batteryStatusColor = isCharging
+    ? positiveGreen
+    : isDischarging
+      ? negativeRed
+      : neutralGray;
+  const batteryVisualColor = batteryFull && !isCharging && !isDischarging
+    ? fullBlue
+    : batteryStatusColor;
+
+  const generationKw = deyeStation?.generationPowerKw ?? null;
+  const hasGeneration =
+    typeof generationKw === "number" && Number.isFinite(generationKw) && generationKw > 0.01;
+  const generationLabelColor = hasGeneration ? positiveGreen : neutralGray;
+
+  const gridPowerKw = deyeStation?.gridPowerKw ?? null;
+  const isGridImport =
+    typeof gridPowerKw === "number" ? gridPowerKw > 0.01 : false;
+  const gridPowerLabel =
+    isGridImport
+      ? t(uiLang, "grid_import_power")
+      : t(uiLang, "grid_export_power");
+  const gridLabelColor = isGridImport ? negativeRed : positiveGreen;
 
   return (
     <Paper sx={{ p: 1.25, mb: 1.25 }}>
@@ -143,38 +188,118 @@ export function DeyeStationSection({
         alignItems="center"
         justifyContent="space-between"
         spacing={1}
-        sx={{ cursor: "pointer" }}
         onClick={onToggleCollapsed}
+        sx={{ cursor: "pointer" }}
       >
         <Stack direction="row" alignItems="center" spacing={1.2} minWidth={0}>
+          <SolarPowerRoundedIcon sx={{ fontSize: 18, color: "warning.light", flexShrink: 0 }} />
           <Typography variant="subtitle2" fontWeight={800}>
             {t(uiLang, "deye_station")} {deyeStation?.stationId ? `#${deyeStation.stationId}` : ""}
           </Typography>
-
-          {deyeCollapsed && (
-            <Stack direction="row" spacing={1} alignItems="center" minWidth={0}>
-              <Chip
-                label={gridStatusLabel}
-                size="small"
-                color={gridStatusColor}
-                variant="outlined"
-              />
-              {batteryModeLabel ? (
-                <Typography variant="body2" color="text.secondary" noWrap>
-                  {batteryModeLabel}
-                  {typeof deyeStation?.batteryDischargePowerKw === "number" && deyeStation.batteryDischargePowerKw > 0
-                    ? ` ${deyeStation.batteryDischargePowerKw.toFixed(2)} ${kwUnit}`
-                    : ""}
+          <Stack
+            direction="row"
+            spacing={1.6}
+            alignItems="center"
+            minWidth={0}
+            sx={{ flexWrap: "wrap", rowGap: 0.8 }}
+          >
+            <Chip
+              label={gridStatusLabel}
+              size="small"
+              color={gridStatusColor}
+              variant={gridStatusVariant}
+              sx={{
+                borderWidth: deyeStation?.gridOnline === false ? 2 : undefined,
+                fontWeight: 700,
+              }}
+            />
+            {batteryModeLabel ? (
+              <Box
+                sx={{
+                  px: 0.9,
+                  py: 0.35,
+                  borderRadius: 1.2,
+                  border: `1px solid ${batteryStatusColor}`,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 0.6,
+                }}
+              >
+                <Typography variant="body2" sx={{ color: batteryStatusColor }} noWrap>
+                  {batteryModeLabel}:
                 </Typography>
-              ) : null}
-              <Stack direction="row" spacing={0.75} alignItems="center">
-                <BatteryPill batteryColor={batteryColor} batteryFill={batteryFill} />
-                <Typography variant="body2" color="text.secondary">
-                  {typeof deyeStation?.batterySoc === "number" ? `${deyeStation.batterySoc.toFixed(1)}%` : "-"}
-                </Typography>
-              </Stack>
-            </Stack>
-          )}
+                  <Typography variant="body2" sx={{ color: "#ffffff", fontWeight: 500 }} noWrap>
+                    {batteryPowerText}
+                  </Typography>
+              </Box>
+            ) : null}
+            <Box
+              sx={{
+                px: 0.9,
+                py: 0.35,
+                borderRadius: 1.2,
+                border: `1px solid ${batteryVisualColor}`,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.75,
+              }}
+            >
+              <BatteryPill batteryColor={batteryColor} batteryFill={batteryFill} />
+              <Typography variant="body2" sx={{ color: "#ffffff", fontWeight: 500 }} noWrap>
+                {typeof batterySoc === "number" ? `${batterySoc.toFixed(1)}%` : "-"}
+              </Typography>
+            </Box>
+            <Box
+              sx={{
+                px: 0.9,
+                py: 0.35,
+                borderRadius: 1.2,
+                border: `1px solid ${generationLabelColor}`,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.6,
+              }}
+            >
+              <Typography variant="body2" sx={{ color: generationLabelColor }} noWrap>
+                {t(uiLang, "generation")}:
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "#ffffff",
+                  fontWeight: 500,
+                }}
+                noWrap
+              >
+                {typeof generationKw === "number" ? `${generationKw.toFixed(2)} ${kwUnit}` : "-"}
+              </Typography>
+            </Box>
+            <Box
+              sx={{
+                px: 0.9,
+                py: 0.35,
+                borderRadius: 1.2,
+                border: `1px solid ${gridLabelColor}`,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.6,
+              }}
+            >
+              <Typography variant="body2" sx={{ color: gridLabelColor }} noWrap>
+                {gridPowerLabel}:
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "#ffffff",
+                  fontWeight: 500,
+                }}
+                noWrap
+              >
+                {typeof gridPowerKw === "number" ? `${Math.abs(gridPowerKw).toFixed(2)} ${kwUnit}` : "-"}
+              </Typography>
+            </Box>
+          </Stack>
         </Stack>
 
         <Stack direction="row" alignItems="center" spacing={1}>
@@ -183,81 +308,55 @@ export function DeyeStationSection({
               ? t(uiLang, "updating")
               : `${t(uiLang, "updated")}: ${formatUpdatedAt(deyeStation?.updatedAt)}`}
           </Typography>
-          <Typography variant="subtitle2" color="text.secondary">{deyeCollapsed ? "▸" : "▾"}</Typography>
+          <Typography variant="subtitle2" color="text.secondary">
+            {deyeCollapsed ? "▸" : "▾"}
+          </Typography>
         </Stack>
       </Stack>
 
-      <Collapse in={!deyeCollapsed}>
-        <Grid container spacing={1.2} sx={{ mt: 0.8 }}>
-          <Grid size={{ xs: 12, md: 3 }}>
-            <Typography variant="caption" color="text.secondary">{t(uiLang, "grid")}</Typography>
-            <Typography variant="body2" fontWeight={700}>
-              {gridStatusLabel}
-            </Typography>
-          </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
-            <Typography variant="caption" color="text.secondary">{t(uiLang, "battery")}</Typography>
-            <Stack direction="row" spacing={0.75} alignItems="center">
-              <BatteryPill batteryColor={batteryColor} batteryFill={batteryFill} />
-              <Typography variant="body2" fontWeight={700} title={`Battery: ${batteryMode}`}>
-                {typeof deyeStation?.batterySoc === "number" ? `${deyeStation.batterySoc.toFixed(1)}%` : "-"}
-              </Typography>
-            </Stack>
-          </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
-            <Typography variant="caption" color="text.secondary">{t(uiLang, "battery_status_power")}</Typography>
-            <Typography variant="body2" fontWeight={700}>
-              {batteryModeLabel || "-"}
-              {typeof deyeStation?.batteryDischargePowerKw === "number"
-                ? ` · ${deyeStation.batteryDischargePowerKw.toFixed(2)} ${kwUnit}`
-                : ""}
-            </Typography>
-          </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
-            <Typography variant="caption" color="text.secondary">{t(uiLang, "generation")}</Typography>
-            <Typography variant="body2" fontWeight={700}>
-              {typeof deyeStation?.generationPowerKw === "number" ? `${deyeStation.generationPowerKw.toFixed(2)} ${kwUnit}` : "-"}
-            </Typography>
-          </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
-            <Typography variant="caption" color="text.secondary">{t(uiLang, "grid_state_text")}</Typography>
-            <Typography variant="body2" fontWeight={700} noWrap title={deyeStation?.gridStateText ?? "-"}>
-              {deyeStation?.gridStateText ?? "-"}
-            </Typography>
-          </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
-            <Typography variant="caption" color="text.secondary">{t(uiLang, "grid_power")}</Typography>
-            <Typography variant="body2" fontWeight={700}>
-              {typeof deyeStation?.gridPowerKw === "number" ? `${deyeStation.gridPowerKw.toFixed(2)} ${kwUnit}` : "-"}
-            </Typography>
-          </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <Typography variant="caption" color="text.secondary">{t(uiLang, "grid_detection_signals")}</Typography>
-            <Stack spacing={0.25} sx={{ mt: 0.35 }}>
-              <Typography variant="caption" color="text.secondary">
-                {t(uiLang, "source")}: {gridSourceLabel}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {t(uiLang, "flag_signal")}: {deyeStation?.gridSignals.flag.key ?? "-"} = {deyeStation?.gridSignals.flag.raw ?? "-"} → {formatGridParsed(deyeStation?.gridSignals.flag.parsed ?? null)}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {t(uiLang, "text_signal")}: {deyeStation?.gridSignals.text.key ?? "-"} = {deyeStation?.gridSignals.text.value ?? "-"} → {formatGridParsed(deyeStation?.gridSignals.text.parsed ?? null)}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {t(uiLang, "power_signal")}: {deyeStation?.gridSignals.power.key ?? "-"} = {typeof deyeStation?.gridSignals.power.raw === "number" ? deyeStation.gridSignals.power.raw.toFixed(2) : "-"} ({typeof deyeStation?.gridSignals.power.kw === "number" ? `${deyeStation.gridSignals.power.kw.toFixed(2)} ${kwUnit}` : "-"}) → {formatGridParsed(deyeStation?.gridSignals.power.parsed ?? null)}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {t(uiLang, "charging_fallback")}: {formatGridParsed(deyeStation?.gridSignals.chargingFallbackParsed ?? null)}
-              </Typography>
-            </Stack>
-          </Grid>
-        </Grid>
-      </Collapse>
-
-      {deyeStation?.error ? (
+      {!deyeCollapsed && deyeStation?.error ? (
         <Typography variant="caption" color="error.main" sx={{ mt: 0.75, display: "block" }}>
           {t(uiLang, "deye_api_error")}: {deyeStation.error}
         </Typography>
+      ) : null}
+
+      {!deyeCollapsed && signalRows.length > 0 ? (
+        <Box
+          sx={{
+            mt: 0.9,
+            pt: 0.85,
+            borderTop: (theme) => `1px dashed ${theme.palette.divider}`,
+          }}
+        >
+          <Typography variant="caption" sx={{ color: "text.primary", fontWeight: 700 }}>
+            {t(uiLang, "api_signals")} ({signalRows.length})
+          </Typography>
+          <Box
+            sx={{
+              mt: 0.5,
+              display: "grid",
+              gap: 0.4,
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            }}
+          >
+            {signalRows.map((signal) => (
+              <Typography
+                key={signal.key}
+                variant="caption"
+                sx={{
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  color: "text.secondary",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+                title={`${signal.key}=${signal.value}`}
+              >
+                {signal.key}: <Box component="span" sx={{ color: "text.primary" }}>{signal.value}</Box>
+              </Typography>
+            ))}
+          </Box>
+        </Box>
       ) : null}
     </Paper>
   );

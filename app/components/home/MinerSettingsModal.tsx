@@ -1,8 +1,8 @@
 import type { Dispatch, SetStateAction } from "react";
 import {
+  Grid,
   Box,
   Button,
-  Checkbox,
   Dialog,
   DialogActions,
   DialogContent,
@@ -10,6 +10,7 @@ import {
   Divider,
   FormControlLabel,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
@@ -23,7 +24,9 @@ type MinerSettingsPanel = {
   autoPowerOnGridRestore: boolean;
   autoPowerOffGridLoss: boolean;
   autoPowerOffGenerationBelowKw: number | null;
+  autoPowerOnGenerationAboveKw: number | null;
   autoPowerOffBatteryBelowPercent: number | null;
+  autoPowerOnBatteryAbovePercent: number | null;
   autoPowerRestoreDelayMinutes: number;
   overheatProtectionEnabled: boolean;
   overheatShutdownTempC: number;
@@ -81,19 +84,41 @@ export function MinerSettingsModal({
   onClose,
   onSave,
 }: MinerSettingsModalProps) {
+  const batteryOffBase =
+    typeof draft.autoPowerOffBatteryBelowPercent === "number"
+      ? draft.autoPowerOffBatteryBelowPercent
+      : 80;
+  const batteryOnPresetValues = Array.from(
+    new Set([
+      Math.min(100, batteryOffBase + 5),
+      Math.min(100, batteryOffBase + 10),
+    ]),
+  ).sort((a, b) => a - b);
+
+  const generationOffBase =
+    typeof draft.autoPowerOffGenerationBelowKw === "number"
+      ? draft.autoPowerOffGenerationBelowKw
+      : 0;
+  const generationOnPresetValues = Array.from(
+    new Set([
+      generationOffBase + 4,
+      generationOffBase + 8,
+    ]),
+  ).sort((a, b) => a - b);
+
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="md">
       <DialogTitle sx={{ fontWeight: 800 }}>
         {t(uiLang, "miner_settings")}: {draft.minerId}
       </DialogTitle>
       <DialogContent>
-        <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+        <Stack spacing={2} sx={{ pt: 0.5 }}>
           <Typography variant="subtitle2" fontWeight={800}>
             {t(uiLang, "overheat_protection")}
           </Typography>
           <FormControlLabel
             control={
-              <Checkbox
+              <Switch
                 checked={draft.overheatProtectionEnabled}
                 onChange={(e) =>
                   setDraft((prev) =>
@@ -140,7 +165,7 @@ export function MinerSettingsModal({
           </Typography>
           <FormControlLabel
             control={
-              <Checkbox
+              <Switch
                 checked={draft.autoPowerOnGridRestore}
                 onChange={(e) =>
                   setDraft((prev) => (prev ? { ...prev, autoPowerOnGridRestore: e.target.checked } : prev))
@@ -153,102 +178,258 @@ export function MinerSettingsModal({
             {t(uiLang, "trigger_when_deye_grid_changes_from_off_to_on")}
           </Typography>
 
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={draft.autoPowerOffGridLoss}
-                onChange={(e) =>
-                  setDraft((prev) => (prev ? { ...prev, autoPowerOffGridLoss: e.target.checked } : prev))
+          <Box
+            sx={{
+              border: (theme) => `1px solid ${theme.palette.divider}`,
+              borderRadius: 1.5,
+              p: 1.25,
+              bgcolor: "rgba(15,23,42,0.02)",
+            }}
+          >
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle2" fontWeight={800}>
+                {t(uiLang, "action_turn_off")}
+              </Typography>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={draft.autoPowerOffGridLoss}
+                    onChange={(e) =>
+                      setDraft((prev) => (prev ? { ...prev, autoPowerOffGridLoss: e.target.checked } : prev))
+                    }
+                  />
                 }
+                label={t(uiLang, "turn_off_bound_automat_when_grid_is_lost")}
               />
-            }
-            label={t(uiLang, "turn_off_bound_automat_when_grid_is_lost")}
-          />
-          <Typography variant="caption" color="text.secondary">
-            {t(uiLang, "trigger_when_deye_grid_changes_from_on_to_off")}
-          </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {t(uiLang, "trigger_when_deye_grid_changes_from_on_to_off")}
+              </Typography>
 
-          <TextField
-            type="number"
-            label={t(uiLang, "auto_off_if_generation_below_kw")}
-            placeholder={t(uiLang, "disabled")}
-            value={draft.autoPowerOffGenerationBelowKw ?? ""}
-            onChange={(e) =>
-              setDraft((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      autoPowerOffGenerationBelowKw:
-                        e.target.value === "" ? null : Number.parseFloat(e.target.value || "0") || 0,
-                    }
-                  : prev,
-              )
-            }
-          />
-          <Typography variant="caption" color="text.secondary">
-            {t(uiLang, "hint_if_both_generation_and_battery_thresholds_are_set_off_triggers_only_when_both_are_below_limits")}
-          </Typography>
-          <Stack direction="row" spacing={0.75}>
-            <PresetButtons
-              values={[5, 10]}
-              onSelect={(preset) =>
-                setDraft((prev) => (prev ? { ...prev, autoPowerOffGenerationBelowKw: preset } : prev))
-              }
-              format={(preset) => `${preset} kW`}
-            />
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              onClick={() =>
-                setDraft((prev) => (prev ? { ...prev, autoPowerOffGenerationBelowKw: null } : prev))
-              }
-              sx={{ borderRadius: 999 }}
-            >
-              {t(uiLang, "off_2")}
-            </Button>
-          </Stack>
+              <Grid container spacing={1.5}>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Stack spacing={1.5}>
+                    <TextField
+                      type="number"
+                      label={t(uiLang, "auto_off_if_battery_below_percent")}
+                      placeholder={t(uiLang, "disabled")}
+                      value={draft.autoPowerOffBatteryBelowPercent ?? ""}
+                      onChange={(e) =>
+                        setDraft((prev) =>
+                          prev
+                            ? (() => {
+                                const offNext =
+                                  e.target.value === "" ? null : Number.parseFloat(e.target.value || "0") || 0;
+                                const onCurrent = prev.autoPowerOnBatteryAbovePercent;
+                                return {
+                                  ...prev,
+                                  autoPowerOffBatteryBelowPercent: offNext,
+                                  autoPowerOnBatteryAbovePercent:
+                                    typeof offNext === "number" &&
+                                    typeof onCurrent === "number" &&
+                                    onCurrent < offNext
+                                      ? offNext
+                                      : onCurrent,
+                                };
+                              })()
+                            : prev,
+                        )
+                      }
+                    />
+                    <Stack
+                      direction="row"
+                      spacing={0.75}
+                      sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1.5 }}
+                    >
+                      <PresetButtons
+                        values={[80, 90]}
+                        onSelect={(preset) =>
+                          setDraft((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  autoPowerOffBatteryBelowPercent: preset,
+                                  autoPowerOnBatteryAbovePercent:
+                                    typeof prev.autoPowerOnBatteryAbovePercent === "number" &&
+                                    prev.autoPowerOnBatteryAbovePercent < preset
+                                      ? preset
+                                      : prev.autoPowerOnBatteryAbovePercent,
+                                }
+                              : prev,
+                          )
+                        }
+                        format={(preset) => `${preset}%`}
+                      />
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="inherit"
+                        onClick={() =>
+                          setDraft((prev) => (prev ? { ...prev, autoPowerOffBatteryBelowPercent: null } : prev))
+                        }
+                        sx={{ borderRadius: 999 }}
+                      >
+                        {t(uiLang, "off_2")}
+                      </Button>
+                    </Stack>
+                    <Box sx={{ height: 10 }} />
 
-          <TextField
-            type="number"
-            label={t(uiLang, "auto_off_if_battery_below_percent")}
-            placeholder={t(uiLang, "disabled")}
-            value={draft.autoPowerOffBatteryBelowPercent ?? ""}
-            onChange={(e) =>
-              setDraft((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      autoPowerOffBatteryBelowPercent:
-                        e.target.value === "" ? null : Number.parseFloat(e.target.value || "0") || 0,
-                    }
-                  : prev,
-              )
-            }
-          />
-          <Typography variant="caption" color="text.secondary">
-            {t(uiLang, "hint_if_both_generation_and_battery_thresholds_are_set_off_triggers_only_when_both_are_below_limits")}
-          </Typography>
-          <Stack direction="row" spacing={0.75}>
-            <PresetButtons
-              values={[80, 90]}
-              onSelect={(preset) =>
-                setDraft((prev) => (prev ? { ...prev, autoPowerOffBatteryBelowPercent: preset } : prev))
-              }
-              format={(preset) => `${preset}%`}
-            />
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              onClick={() =>
-                setDraft((prev) => (prev ? { ...prev, autoPowerOffBatteryBelowPercent: null } : prev))
-              }
-              sx={{ borderRadius: 999 }}
-            >
-              {t(uiLang, "off_2")}
-            </Button>
-          </Stack>
+                    <TextField
+                      type="number"
+                      label={t(uiLang, "auto_on_if_battery_above_percent")}
+                      placeholder={t(uiLang, "disabled")}
+                      value={draft.autoPowerOnBatteryAbovePercent ?? ""}
+                      onChange={(e) =>
+                        setDraft((prev) => {
+                          if (!prev) return prev;
+                          const next =
+                            e.target.value === "" ? null : Number.parseFloat(e.target.value || "0") || 0;
+                          const off = prev.autoPowerOffBatteryBelowPercent;
+                          if (typeof next === "number" && typeof off === "number" && next < off) {
+                            return { ...prev, autoPowerOnBatteryAbovePercent: off };
+                          }
+                          return { ...prev, autoPowerOnBatteryAbovePercent: next };
+                        })
+                      }
+                    />
+                    <Stack
+                      direction="row"
+                      spacing={0.75}
+                      sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1.5 }}
+                    >
+                      <PresetButtons
+                        values={batteryOnPresetValues}
+                        onSelect={(preset) =>
+                          setDraft((prev) => {
+                            if (!prev) return prev;
+                            const off = prev.autoPowerOffBatteryBelowPercent;
+                            const safePreset =
+                              typeof off === "number" ? Math.max(preset, off) : preset;
+                            return { ...prev, autoPowerOnBatteryAbovePercent: safePreset };
+                          })
+                        }
+                        format={(preset) => `${preset}%`}
+                      />
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="inherit"
+                        onClick={() =>
+                          setDraft((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  autoPowerOnBatteryAbovePercent:
+                                    typeof prev.autoPowerOffBatteryBelowPercent === "number"
+                                      ? prev.autoPowerOffBatteryBelowPercent
+                                      : null,
+                                }
+                              : prev,
+                          )
+                        }
+                        sx={{ borderRadius: 999 }}
+                      >
+                        {t(uiLang, "same_as_off_threshold")}
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Stack spacing={1.5}>
+                    <TextField
+                      type="number"
+                      label={t(uiLang, "auto_off_if_generation_below_kw")}
+                      placeholder={t(uiLang, "disabled")}
+                      value={draft.autoPowerOffGenerationBelowKw ?? ""}
+                      onChange={(e) =>
+                        setDraft((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                autoPowerOffGenerationBelowKw:
+                                  e.target.value === "" ? null : Number.parseFloat(e.target.value || "0") || 0,
+                              }
+                            : prev,
+                        )
+                      }
+                    />
+                    <Stack
+                      direction="row"
+                      spacing={0.75}
+                      sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1.5 }}
+                    >
+                      <PresetButtons
+                        values={[5, 10]}
+                        onSelect={(preset) =>
+                          setDraft((prev) => (prev ? { ...prev, autoPowerOffGenerationBelowKw: preset } : prev))
+                        }
+                        format={(preset) => `${preset} kW`}
+                      />
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="inherit"
+                        onClick={() =>
+                          setDraft((prev) => (prev ? { ...prev, autoPowerOffGenerationBelowKw: null } : prev))
+                        }
+                        sx={{ borderRadius: 999 }}
+                      >
+                        {t(uiLang, "off_2")}
+                      </Button>
+                    </Stack>
+                    <Box sx={{ height: 10 }} />
+
+                    <TextField
+                      type="number"
+                      label={t(uiLang, "auto_on_if_generation_above_kw")}
+                      placeholder={t(uiLang, "disabled")}
+                      value={draft.autoPowerOnGenerationAboveKw ?? ""}
+                      onChange={(e) =>
+                        setDraft((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                autoPowerOnGenerationAboveKw:
+                                  e.target.value === "" ? null : Number.parseFloat(e.target.value || "0") || 0,
+                              }
+                            : prev,
+                        )
+                      }
+                    />
+                    <Stack direction="row" spacing={0.75}>
+                      <PresetButtons
+                        values={generationOnPresetValues}
+                        onSelect={(preset) =>
+                          setDraft((prev) => (prev ? { ...prev, autoPowerOnGenerationAboveKw: preset } : prev))
+                        }
+                        format={(preset) => `${preset} kW`}
+                      />
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="inherit"
+                        onClick={() =>
+                          setDraft((prev) => (prev ? { ...prev, autoPowerOnGenerationAboveKw: null } : prev))
+                        }
+                        sx={{ borderRadius: 999 }}
+                      >
+                        {t(uiLang, "off_2")}
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Grid>
+              </Grid>
+
+              <Typography variant="caption" color="text.secondary">
+                {t(uiLang, "hint_if_both_generation_and_battery_thresholds_are_set_off_triggers_only_when_both_are_below_limits")}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {t(uiLang, "hint_auto_on_battery_threshold_must_be_greater_or_equal_than_auto_off")}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {t(uiLang, "hint_auto_on_generation_threshold_has_priority_over_battery")}
+              </Typography>
+            </Stack>
+          </Box>
 
           <TextField
             type="number"
@@ -281,7 +462,7 @@ export function MinerSettingsModal({
 
           <FormControlLabel
             control={
-              <Checkbox
+              <Switch
                 checked={draft.autoRestartEnabled}
                 onChange={(e) =>
                   setDraft((prev) => (prev ? { ...prev, autoRestartEnabled: e.target.checked } : prev))

@@ -16,7 +16,9 @@ type Store = {
       autoPowerOffGridLoss?: boolean;
       boundTuyaDeviceId?: string | null;
       autoPowerOffGenerationBelowKw?: number | null;
+      autoPowerOnGenerationAboveKw?: number | null;
       autoPowerOffBatteryBelowPercent?: number | null;
+      autoPowerOnBatteryAbovePercent?: number | null;
       autoPowerRestoreDelayMinutes?: number;
       overheatProtectionEnabled?: boolean;
       overheatShutdownTempC?: number | null;
@@ -45,6 +47,9 @@ const store: Store =
     notifications: [],
     settings: {
       autoRestartEnabled: true,
+      minerSyncIntervalSec: 60,
+      deyeSyncIntervalSec: 60,
+      tuyaSyncIntervalSec: 60,
       restartDelayMinutes: 10,
       postRestartGraceMinutes: 10,
       lowHashrateThresholdGh: 10,
@@ -52,6 +57,7 @@ const store: Store =
       notifyAutoRestart: true,
       notifyRestartPrompt: true,
       notificationVisibleCount: 2,
+      criticalBatteryOffPercent: 30,
     },
   };
 
