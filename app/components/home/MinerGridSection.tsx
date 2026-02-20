@@ -23,6 +23,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import type { CommandType, MinerState } from "@/app/lib/types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 import { ButtonSpinnerIcon } from "@/app/components/icons";
@@ -142,7 +143,9 @@ export function MinerGridSection({
   onRequestMinerCommandConfirm,
   onUnlockOverheatControl,
 }: MinerGridSectionProps) {
+  const theme = useTheme();
   const PLACEHOLDER_ID = "__drag_placeholder__";
+  const greenChipText = theme.palette.custom.chipTextOnSuccess;
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
   const [dragOverCardId, setDragOverCardId] = useState<string | null>(null);
@@ -459,7 +462,7 @@ export function MinerGridSection({
                     p: 1.1,
                     display: "flex",
                     flexDirection: "column",
-                    gap: 1,
+                    gap: 0.8,
                     flex: 1,
                     height: "100%",
                     borderStyle: "solid",
@@ -515,11 +518,13 @@ export function MinerGridSection({
                                 sx={{
                                   maxWidth: 220,
                                   borderWidth: linkedDevice?.on === false ? 2 : undefined,
+                                  color: linkedDevice?.on === true ? greenChipText : undefined,
                                   "& .MuiChip-label": {
                                     overflow: "hidden",
                                     textOverflow: "ellipsis",
                                     whiteSpace: "nowrap",
                                     fontWeight: 700,
+                                    color: linkedDevice?.on === true ? greenChipText : undefined,
                                   },
                                 }}
                               />
@@ -533,6 +538,13 @@ export function MinerGridSection({
                                 borderWidth:
                                   statusLabel === t(uiLang, "offline") ? 2 : undefined,
                                 fontWeight: 700,
+                                color: statusColor === "success" && statusVariant === "filled" ? greenChipText : undefined,
+                                "& .MuiChip-label": {
+                                  color:
+                                    statusColor === "success" && statusVariant === "filled"
+                                      ? greenChipText
+                                      : undefined,
+                                },
                               }}
                             />
                             <Stack direction="row" spacing={0.2} alignItems="center" sx={{ minWidth: 0, flexShrink: 1, maxWidth: "100%" }}>
@@ -548,11 +560,11 @@ export function MinerGridSection({
                               <Tooltip title="Rename">
                                 <IconButton
                                   size="small"
-                                  color="inherit"
+                                  color="primary"
                                   sx={{ p: 0.35 }}
                                   onClick={() => onStartAliasEdit(miner.minerId, alias || "")}
                                 >
-                                  <EditRoundedIcon fontSize="small" />
+                                  <EditRoundedIcon fontSize="small" sx={{ fontSize: 16 }} />
                                 </IconButton>
                               </Tooltip>
                             </Stack>
@@ -583,18 +595,19 @@ export function MinerGridSection({
                     </Stack>
                   </Stack>
 
-                  <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap">
-                    {overheatLocked ? (
+                  {overheatLocked ? (
+                    <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap">
                       <Chip
                         label={`${t(uiLang, "locked")} ${typeof miner.overheatLastTempC === "number" ? `(${miner.overheatLastTempC.toFixed(1)}C)` : ""}`}
                         size="small"
                         color="error"
                       />
-                    ) : null}
-                  </Stack>
+                    </Stack>
+                  ) : null}
 
                   <Box
                     sx={{
+                      mt: -0.25,
                       display: "grid",
                       gap: 0.6,
                       gridTemplateColumns: statusBadgesVertical
@@ -624,7 +637,7 @@ export function MinerGridSection({
                     ))}
                   </Box>
 
-                  <Grid container spacing={0.8} alignItems="stretch">
+                  <Grid container spacing={0.8} alignItems="stretch" sx={{ mt: 0.3 }}>
                     <Grid size={{ xs: 12, md: 6 }} sx={{ display: "flex" }}>
                       <Paper
                         variant="outlined"

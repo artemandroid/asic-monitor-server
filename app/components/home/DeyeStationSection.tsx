@@ -6,6 +6,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
 type DeyeStationSnapshot = {
@@ -138,10 +139,12 @@ export function DeyeStationSection({
   formatUpdatedAt,
   onToggleCollapsed,
 }: DeyeStationSectionProps) {
-  const positiveGreen = "#86efac";
-  const neutralGray = "#64748b";
-  const fullBlue = "#60a5fa";
-  const negativeRed = "#ef4444";
+  const theme = useTheme();
+  const neutralGray = theme.palette.custom.deyeNeutralGray;
+  const fullBlue = theme.palette.custom.deyeFullBlue;
+  const negativeRed = theme.palette.custom.deyeNegativeRed;
+  const greenChipText = theme.palette.custom.chipTextOnSuccess;
+  const valueTextColor = theme.palette.text.primary;
   const formatGridParsed = (value: boolean | null) =>
     value === true ? t(uiLang, "connected") : value === false ? t(uiLang, "disconnected") : t(uiLang, "unknown");
 
@@ -172,7 +175,7 @@ export function DeyeStationSection({
   const batterySoc = deyeStation?.batterySoc ?? null;
   const batteryFull = typeof batterySoc === "number" && batterySoc >= 99;
   const batteryStatusColor = isCharging
-    ? positiveGreen
+    ? fullBlue
     : isDischarging
       ? negativeRed
       : neutralGray;
@@ -183,18 +186,16 @@ export function DeyeStationSection({
   const generationKw = deyeStation?.generationPowerKw ?? null;
   const hasGeneration =
     typeof generationKw === "number" && Number.isFinite(generationKw) && generationKw > 0.01;
-  const generationLabelColor = hasGeneration ? positiveGreen : neutralGray;
+  const generationLabelColor = hasGeneration ? fullBlue : neutralGray;
 
   const gridPowerKw = deyeStation?.gridPowerKw ?? null;
-  const consumptionKw = deyeStation?.consumptionPowerKw ?? null;
-  const today = deyeStation?.energyToday;
   const isGridImport =
     typeof gridPowerKw === "number" ? gridPowerKw > 0.01 : false;
   const gridPowerLabel =
     isGridImport
       ? t(uiLang, "grid_import_power")
       : t(uiLang, "grid_export_power");
-  const gridLabelColor = isGridImport ? negativeRed : positiveGreen;
+  const gridLabelColor = isGridImport ? negativeRed : fullBlue;
 
   return (
     <Paper sx={{ p: 1.25, mb: 1.25 }}>
@@ -226,8 +227,28 @@ export function DeyeStationSection({
               sx={{
                 borderWidth: deyeStation?.gridOnline === false ? 2 : undefined,
                 fontWeight: 700,
+                color: deyeStation?.gridOnline === true ? greenChipText : undefined,
+                "& .MuiChip-label": {
+                  color: deyeStation?.gridOnline === true ? greenChipText : undefined,
+                },
               }}
             />
+            <Box
+              sx={{
+                px: 0.9,
+                py: 0.35,
+                borderRadius: 1.2,
+                border: `1px solid ${batteryVisualColor}`,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.75,
+              }}
+            >
+              <BatteryPill batteryColor={batteryColor} batteryFill={batteryFill} />
+              <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
+                {typeof batterySoc === "number" ? `${batterySoc.toFixed(1)}%` : "-"}
+              </Typography>
+            </Box>
             {batteryModeLabel && showBatteryStatusPill ? (
               <Box
                 sx={{
@@ -243,52 +264,38 @@ export function DeyeStationSection({
                 <Typography variant="body2" sx={{ color: batteryStatusColor }} noWrap>
                   {batteryModeLabel}:
                 </Typography>
-                  <Typography variant="body2" sx={{ color: "#ffffff", fontWeight: 500 }} noWrap>
-                    {batteryPowerText}
-                  </Typography>
+                <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
+                  {batteryPowerText}
+                </Typography>
               </Box>
             ) : null}
-            <Box
-              sx={{
-                px: 0.9,
-                py: 0.35,
-                borderRadius: 1.2,
-                border: `1px solid ${batteryVisualColor}`,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.75,
-              }}
-            >
-              <BatteryPill batteryColor={batteryColor} batteryFill={batteryFill} />
-              <Typography variant="body2" sx={{ color: "#ffffff", fontWeight: 500 }} noWrap>
-                {typeof batterySoc === "number" ? `${batterySoc.toFixed(1)}%` : "-"}
-              </Typography>
-            </Box>
-            <Box
-              sx={{
-                px: 0.9,
-                py: 0.35,
-                borderRadius: 1.2,
-                border: `1px solid ${generationLabelColor}`,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.6,
-              }}
-            >
-              <Typography variant="body2" sx={{ color: generationLabelColor }} noWrap>
-                {t(uiLang, "generation")}:
-              </Typography>
-              <Typography
-                variant="body2"
+            {hasGeneration ? (
+              <Box
                 sx={{
-                  color: "#ffffff",
-                  fontWeight: 500,
+                  px: 0.9,
+                  py: 0.35,
+                  borderRadius: 1.2,
+                  border: `1px solid ${generationLabelColor}`,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 0.6,
                 }}
-                noWrap
               >
-                {typeof generationKw === "number" ? `${generationKw.toFixed(2)} ${kwUnit}` : "-"}
-              </Typography>
-            </Box>
+                <Typography variant="body2" sx={{ color: generationLabelColor }} noWrap>
+                  {t(uiLang, "generation")}:
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: valueTextColor,
+                    fontWeight: 500,
+                  }}
+                  noWrap
+                >
+                  {typeof generationKw === "number" ? `${generationKw.toFixed(2)} ${kwUnit}` : "-"}
+                </Typography>
+              </Box>
+            ) : null}
             <Box
               sx={{
                 px: 0.9,
@@ -306,7 +313,7 @@ export function DeyeStationSection({
               <Typography
                 variant="body2"
                 sx={{
-                  color: "#ffffff",
+                  color: valueTextColor,
                   fontWeight: 500,
                 }}
                 noWrap
@@ -333,69 +340,6 @@ export function DeyeStationSection({
         <Typography variant="caption" color="error.main" sx={{ mt: 0.75, display: "block" }}>
           {t(uiLang, "deye_api_error")}: {deyeStation.error}
         </Typography>
-      ) : null}
-
-      {!deyeCollapsed ? (
-        <Box
-          sx={{
-            mt: 0.9,
-            pt: 0.85,
-            borderTop: (theme) => `1px dashed ${theme.palette.divider}`,
-          }}
-        >
-          <Typography variant="caption" sx={{ color: "text.primary", fontWeight: 700 }}>
-            {t(uiLang, "today_energy")}
-          </Typography>
-          <Box
-            sx={{
-              mt: 0.55,
-              display: "grid",
-              gap: 0.55,
-              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-            }}
-          >
-            <Typography variant="caption" color="text.secondary">
-              {t(uiLang, "consumed_today")}: <Box component="span" sx={{ color: "text.primary" }}>
-                {today ? `${today.consumptionKwh.toFixed(2)} kWh` : "-"}
-              </Box>
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t(uiLang, "generated_today")}: <Box component="span" sx={{ color: "text.primary" }}>
-                {today ? `${today.generationKwh.toFixed(2)} kWh` : "-"}
-              </Box>
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t(uiLang, "import_day")}: <Box component="span" sx={{ color: "text.primary" }}>
-                {today ? `${today.importKwhDay.toFixed(2)} kWh` : "-"}
-              </Box>
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t(uiLang, "import_night")}: <Box component="span" sx={{ color: "text.primary" }}>
-                {today ? `${today.importKwhNight.toFixed(2)} kWh` : "-"}
-              </Box>
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t(uiLang, "export_today")}: <Box component="span" sx={{ color: "text.primary" }}>
-                {today ? `${today.exportKwh.toFixed(2)} kWh` : "-"}
-              </Box>
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t(uiLang, "solar_coverage")}: <Box component="span" sx={{ color: "text.primary" }}>
-                {today ? `${today.solarCoveragePercent.toFixed(1)}%` : "-"}
-              </Box>
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t(uiLang, "estimated_cost_today")}: <Box component="span" sx={{ color: "text.primary" }}>
-                {today ? `${today.estimatedNetCost.toFixed(2)}` : "-"}
-              </Box>
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t(uiLang, "consumption_now")}: <Box component="span" sx={{ color: "text.primary" }}>
-                {typeof consumptionKw === "number" ? `${consumptionKw.toFixed(2)} ${kwUnit}` : "-"}
-              </Box>
-            </Typography>
-          </Box>
-        </Box>
       ) : null}
 
       {!deyeCollapsed && signalRows.length > 0 ? (

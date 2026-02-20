@@ -217,7 +217,10 @@ function parseGridText(value: string): boolean | null {
 function toKw(value: number | null): number | null {
   if (value === null) return null;
   const abs = Math.abs(value);
-  if (abs >= 100) return value / 1000;
+  // Deye often returns power in watts; convert safely to kW.
+  // 1) definitely watts when value is large (>=100)
+  // 2) also treat large integer two-digit values (e.g. 90) as watts
+  if (abs >= 100 || (Number.isInteger(value) && abs >= 50)) return value / 1000;
   return value;
 }
 
@@ -255,7 +258,6 @@ function parseStationPayload(stationId: number, payload: unknown): DeyeStationSn
     "pvPower",
     "solarPower",
     "totalPvPower",
-    "activePower",
   ])?.value ?? null);
   const consumptionPowerKw = toKw(pickNumberMatch(map, [
     "consumptionPower",

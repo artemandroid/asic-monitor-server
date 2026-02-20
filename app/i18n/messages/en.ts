@@ -159,6 +159,8 @@ export const enMessages = {
   "st": "St",
   "text_signal": "Text signal",
   "temp": "Temp",
+  "theme_dark": "Dark",
+  "theme_light": "Light",
   "theo": "Theo",
   "threshold": "Threshold",
   "trigger_when_deye_grid_changes_from_off_to_on": "Trigger: when Deye grid changes from OFF to ON.",

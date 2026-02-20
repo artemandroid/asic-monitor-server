@@ -38,6 +38,16 @@ export function NotificationsSection({
   containerSx,
   horizontalCollapse = false,
 }: NotificationsSectionProps) {
+  const isRestartNotification = (note: Notification) =>
+    note.action === "RESTART" || /restart|рестарт|перезапуск|перезавантаж/i.test(note.message);
+  const isOffNotification = (note: Notification) =>
+    /auto off|power off|turned off|switch off|вимк|відключ|отключ|знеструм|sleep/i.test(note.message);
+  const getSeverity = (note: Notification): "error" | "info" | "success" => {
+    if (isOffNotification(note)) return "error";
+    if (isRestartNotification(note)) return "info";
+    return "success";
+  };
+
   const restartButtonSx = {
     borderRadius: "8px !important",
     minWidth: 86,
@@ -97,7 +107,7 @@ export function NotificationsSection({
           {visibleGroupedNotifications.map((note) => (
             <Alert
               key={note.id}
-              severity={note.type === "CLIENT_ERROR" ? "error" : "info"}
+              severity={getSeverity(note)}
               variant="outlined"
               sx={{
                 borderRadius: 2,

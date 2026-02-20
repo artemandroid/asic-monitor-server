@@ -58,9 +58,6 @@ const store: Store =
       notifyRestartPrompt: true,
       notificationVisibleCount: 2,
       criticalBatteryOffPercent: 30,
-      dayTariffPrice: 0,
-      nightTariffPrice: 0,
-      greenTariffPrice: 0,
     },
   };
 

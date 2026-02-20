@@ -14,9 +14,6 @@ export type SettingsPayload = {
   notifyRestartPrompt?: boolean;
   notificationVisibleCount?: number;
   criticalBatteryOffPercent?: number;
-  dayTariffPrice?: number;
-  nightTariffPrice?: number;
-  greenTariffPrice?: number;
 };
 
 export async function getSettings() {
@@ -47,9 +44,6 @@ export async function updateSettings(payload: SettingsPayload) {
         notifyRestartPrompt: payload.notifyRestartPrompt,
         notificationVisibleCount: payload.notificationVisibleCount,
         criticalBatteryOffPercent: payload.criticalBatteryOffPercent,
-        dayTariffPrice: payload.dayTariffPrice,
-        nightTariffPrice: payload.nightTariffPrice,
-        greenTariffPrice: payload.greenTariffPrice,
       },
     });
   } catch {
@@ -88,15 +82,6 @@ export async function updateSettings(payload: SettingsPayload) {
     }
     if (typeof payload.criticalBatteryOffPercent === "number") {
       memorySettings.criticalBatteryOffPercent = payload.criticalBatteryOffPercent;
-    }
-    if (typeof payload.dayTariffPrice === "number") {
-      memorySettings.dayTariffPrice = payload.dayTariffPrice;
-    }
-    if (typeof payload.nightTariffPrice === "number") {
-      memorySettings.nightTariffPrice = payload.nightTariffPrice;
-    }
-    if (typeof payload.greenTariffPrice === "number") {
-      memorySettings.greenTariffPrice = payload.greenTariffPrice;
     }
     return memorySettings;
   }

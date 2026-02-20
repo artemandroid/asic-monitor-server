@@ -20,6 +20,7 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
 type TuyaDevice = {
@@ -81,6 +82,8 @@ export function TuyaSection({
   onSaveTuyaBinding,
   onRequestTuyaSwitchConfirm,
 }: TuyaSectionProps) {
+  const theme = useTheme();
+  const greenChipText = theme.palette.custom.chipTextOnSuccess;
   const statusLabel = (d: TuyaDevice) =>
     d.on === null ? (d.online ? "?" : t(uiLang, "offl")) : d.on ? onText : offText;
   const statusVariant = (d: TuyaDevice) =>
@@ -125,11 +128,13 @@ export function TuyaSection({
                     sx={{
                       maxWidth: 220,
                       borderWidth: d.on === false ? 2 : undefined,
+                      color: d.on === true ? greenChipText : undefined,
                       "& .MuiChip-label": {
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
                         fontWeight: 700,
+                        color: d.on === true ? greenChipText : undefined,
                       },
                     }}
                   />
@@ -188,7 +193,13 @@ export function TuyaSection({
                           color={statusColor(device)}
                           variant={statusVariant(device)}
                           label={statusLabel(device)}
-                          sx={{ minWidth: 74, fontWeight: 700, borderWidth: device.on === false ? 2 : undefined }}
+                          sx={{
+                            minWidth: 74,
+                            fontWeight: 700,
+                            borderWidth: device.on === false ? 2 : undefined,
+                            color: device.on === true ? greenChipText : undefined,
+                            "& .MuiChip-label": { color: device.on === true ? greenChipText : undefined },
+                          }}
                         />
                       </TableCell>
                       <TableCell align="center">

@@ -161,6 +161,8 @@ export const ukMessages: Record<UiTranslationKey, string> = {
   "st": "Статус",
   "text_signal": "Текстовий сигнал",
   "temp": "Темп",
+  "theme_dark": "Темна",
+  "theme_light": "Світла",
   "theo": "Теор",
   "threshold": "Поріг",
   "trigger_when_deye_grid_changes_from_off_to_on": "Тригер: коли мережа Deye змінюється з ВИКЛ на ВКЛ.",

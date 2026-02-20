@@ -35,9 +35,6 @@ type GeneralSettings = {
   notifyRestartPrompt: boolean;
   notificationVisibleCount: number;
   criticalBatteryOffPercent: number;
-  dayTariffPrice: number;
-  nightTariffPrice: number;
-  greenTariffPrice: number;
 };
 
 type MinerSettingsPanel = {
@@ -966,9 +963,6 @@ export function useHomeController() {
         notifyRestartPrompt: boolean;
         notificationVisibleCount?: number;
         criticalBatteryOffPercent?: number;
-        dayTariffPrice?: number;
-        nightTariffPrice?: number;
-        greenTariffPrice?: number;
       };
       setGeneralSettingsDraft({
         minerSyncIntervalSec:
@@ -989,18 +983,6 @@ export function useHomeController() {
           typeof data.criticalBatteryOffPercent === "number"
             ? data.criticalBatteryOffPercent
             : 30,
-        dayTariffPrice:
-          typeof data.dayTariffPrice === "number"
-            ? data.dayTariffPrice
-            : 0,
-        nightTariffPrice:
-          typeof data.nightTariffPrice === "number"
-            ? data.nightTariffPrice
-            : 0,
-        greenTariffPrice:
-          typeof data.greenTariffPrice === "number"
-            ? data.greenTariffPrice
-            : 0,
       });
       setShowGeneralSettings(true);
     } catch (err) {
@@ -1661,7 +1643,7 @@ export function useHomeController() {
   const kwUnit = t(uiLang, "kw");
   const batteryColor =
     batteryMode === "charging"
-      ? "#86efac"
+      ? "#60a5fa"
       : batteryMode === "discharging"
         ? "#ef4444"
         : typeof deyeStation?.batterySoc === "number" && deyeStation.batterySoc >= 99

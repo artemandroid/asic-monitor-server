@@ -12,6 +12,7 @@ import { GeneralSettingsModal } from "@/app/components/home/GeneralSettingsModal
 import { MinerSettingsModal } from "@/app/components/home/MinerSettingsModal";
 import { BellIcon, LogoutIcon, SettingsIcon } from "@/app/components/icons";
 import { useHomeController } from "@/app/hooks/useHomeController";
+import { useAppThemeMode } from "@/app/theme/AppThemeProvider";
 
 const NOTIFICATIONS_PANEL_WIDTH_KEY = "mc_notifications_panel_width";
 const MinerGridSection = dynamic(
@@ -21,6 +22,7 @@ const MinerGridSection = dynamic(
 
 function Home() {
   const home = useHomeController();
+  const themeMode = useAppThemeMode();
   const [notificationsPanelWidth, setNotificationsPanelWidth] = useState(() => {
     if (typeof window === "undefined") return 420;
     const raw = window.localStorage.getItem(NOTIFICATIONS_PANEL_WIDTH_KEY);
@@ -81,8 +83,10 @@ function Home() {
         minersCount={home.miners.length}
         settingsIcon={<SettingsIcon />}
         logoutIcon={<LogoutIcon />}
+        themeMode={themeMode.mode}
         onOpenSettings={home.openGeneralSettings}
         onSetLang={home.setLanguage}
+        onToggleTheme={themeMode.toggleMode}
         onRefresh={() => {
           void home.refreshAll();
         }}
@@ -283,4 +287,4 @@ function Home() {
   );
 }
 
-export default dynamic(() => Promise.resolve(Home), { ssr: false });
+export default Home;

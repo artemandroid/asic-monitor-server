@@ -23,9 +23,6 @@ type GeneralSettings = {
   notifyRestartPrompt: boolean;
   notificationVisibleCount: number;
   criticalBatteryOffPercent: number;
-  dayTariffPrice: number;
-  nightTariffPrice: number;
-  greenTariffPrice: number;
 };
 
 type GeneralSettingsModalProps = {
@@ -179,57 +176,6 @@ export function GeneralSettingsModal({
                         0,
                         Math.min(100, Number.parseFloat(e.target.value || "0") || 0),
                       ),
-                    }
-                  : prev,
-              )
-            }
-          />
-
-          <TextField
-            type="number"
-            inputProps={{ min: 0, step: "0.01" }}
-            label={t(uiLang, "day_tariff_price")}
-            value={String(draft.dayTariffPrice)}
-            onChange={(e) =>
-              setDraft((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      dayTariffPrice: Math.max(0, Number.parseFloat(e.target.value || "0") || 0),
-                    }
-                  : prev,
-              )
-            }
-          />
-
-          <TextField
-            type="number"
-            inputProps={{ min: 0, step: "0.01" }}
-            label={t(uiLang, "night_tariff_price")}
-            value={String(draft.nightTariffPrice)}
-            onChange={(e) =>
-              setDraft((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      nightTariffPrice: Math.max(0, Number.parseFloat(e.target.value || "0") || 0),
-                    }
-                  : prev,
-              )
-            }
-          />
-
-          <TextField
-            type="number"
-            inputProps={{ min: 0, step: "0.01" }}
-            label={t(uiLang, "green_tariff_price")}
-            value={String(draft.greenTariffPrice)}
-            onChange={(e) =>
-              setDraft((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      greenTariffPrice: Math.max(0, Number.parseFloat(e.target.value || "0") || 0),
                     }
                   : prev,
               )
