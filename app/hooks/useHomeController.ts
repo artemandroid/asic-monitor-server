@@ -1511,16 +1511,35 @@ export function useHomeController() {
     (d) => !hideUnboundAutomats || !hasAnyBinding || deviceToMiner.has(d.id),
   );
 
-  const moveCardToTop = (cardId: string) => {
+  const reorderCard = (draggedId: string, targetId: string) => {
+    if (!draggedId || !targetId || draggedId === targetId) return;
     setMinerOrder((prev) => {
-      const base =
-        prev.length > 0
-          ? [...prev]
-          : [...miners.map((m) => m.minerId)];
-      const idx = base.indexOf(cardId);
-      if (idx < 0 || idx === 0) return base;
-      const [item] = base.splice(idx, 1);
-      base.unshift(item);
+      const base = prev.length > 0 ? [...prev] : miners.map((m) => m.minerId);
+      if (!base.includes(draggedId)) base.push(draggedId);
+      if (!base.includes(targetId)) base.push(targetId);
+
+      const from = base.indexOf(draggedId);
+      const to = base.indexOf(targetId);
+      if (from < 0 || to < 0 || from === to) return base;
+
+      const [item] = base.splice(from, 1);
+      base.splice(to, 0, item);
+      return base;
+    });
+  };
+
+  const reorderCardToIndex = (draggedId: string, targetIndex: number) => {
+    if (!draggedId || !Number.isFinite(targetIndex)) return;
+    setMinerOrder((prev) => {
+      const base = prev.length > 0 ? [...prev] : miners.map((m) => m.minerId);
+      if (!base.includes(draggedId)) base.push(draggedId);
+
+      const from = base.indexOf(draggedId);
+      if (from < 0) return base;
+
+      const [item] = base.splice(from, 1);
+      const safeIndex = Math.max(0, Math.min(base.length, Math.floor(targetIndex)));
+      base.splice(safeIndex, 0, item);
       return base;
     });
   };
@@ -1689,7 +1708,8 @@ export function useHomeController() {
     formatLastSeen,
     isHashrateReady,
     openMinerSettings,
-    moveCardToTop,
+    reorderCard,
+    reorderCardToIndex,
     startAliasEdit,
     saveAlias,
     cancelAliasEdit,

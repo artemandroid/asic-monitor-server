@@ -156,6 +156,8 @@ export function DeyeStationSection({
   const batteryPowerText = `${showBatteryPower ? Math.abs(batteryPowerKw).toFixed(2) : "0.00"} ${kwUnit}`;
   const isCharging = batteryMode === "charging";
   const isDischarging = batteryMode === "discharging";
+  const isIdle = batteryMode === "idle";
+  const showBatteryStatusPill = !isIdle || showBatteryPower;
   const batterySoc = deyeStation?.batterySoc ?? null;
   const batteryFull = typeof batterySoc === "number" && batterySoc >= 99;
   const batteryStatusColor = isCharging
@@ -213,7 +215,7 @@ export function DeyeStationSection({
                 fontWeight: 700,
               }}
             />
-            {batteryModeLabel ? (
+            {batteryModeLabel && showBatteryStatusPill ? (
               <Box
                 sx={{
                   px: 0.9,

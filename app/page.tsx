@@ -10,11 +10,14 @@ import { NotificationsSection } from "@/app/components/home/NotificationsSection
 import { ConfirmActionModal } from "@/app/components/home/ConfirmActionModal";
 import { GeneralSettingsModal } from "@/app/components/home/GeneralSettingsModal";
 import { MinerSettingsModal } from "@/app/components/home/MinerSettingsModal";
-import { MinerGridSection } from "@/app/components/home/MinerGridSection";
 import { BellIcon, LogoutIcon, SettingsIcon } from "@/app/components/icons";
 import { useHomeController } from "@/app/hooks/useHomeController";
 
 const NOTIFICATIONS_PANEL_WIDTH_KEY = "mc_notifications_panel_width";
+const MinerGridSection = dynamic(
+  () => import("@/app/components/home/MinerGridSection").then((m) => m.MinerGridSection),
+  { ssr: false },
+);
 
 function Home() {
   const home = useHomeController();
@@ -159,7 +162,8 @@ function Home() {
               formatLastSeen={home.formatLastSeen}
               isHashrateReady={home.isHashrateReady}
               onOpenMinerSettings={home.openMinerSettings}
-              onMoveCardToTop={home.moveCardToTop}
+              onReorderCard={home.reorderCard}
+              onReorderCardToIndex={home.reorderCardToIndex}
               onStartAliasEdit={home.startAliasEdit}
               onAliasDraftChange={home.setAliasDraft}
               onSaveAlias={home.saveAlias}

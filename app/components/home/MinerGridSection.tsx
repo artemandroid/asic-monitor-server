@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
-import KeyboardArrowUpRoundedIcon from "@mui/icons-material/KeyboardArrowUpRounded";
+import DragIndicatorRoundedIcon from "@mui/icons-material/DragIndicatorRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import {
   Alert,
@@ -100,7 +100,8 @@ type MinerGridSectionProps = {
   formatLastSeen: (iso: string | null) => string;
   isHashrateReady: (metric: IsHashrateReadyMetric | null) => boolean;
   onOpenMinerSettings: (minerId: string) => void;
-  onMoveCardToTop: (minerId: string) => void;
+  onReorderCard: (draggedId: string, targetId: string) => void;
+  onReorderCardToIndex: (draggedId: string, targetIndex: number) => void;
   onStartAliasEdit: (minerId: string, current: string) => void;
   onAliasDraftChange: (value: string) => void;
   onSaveAlias: (minerId: string) => void;
@@ -132,7 +133,8 @@ export function MinerGridSection({
   formatLastSeen,
   isHashrateReady,
   onOpenMinerSettings,
-  onMoveCardToTop,
+  onReorderCard,
+  onReorderCardToIndex,
   onStartAliasEdit,
   onAliasDraftChange,
   onSaveAlias,
@@ -140,13 +142,46 @@ export function MinerGridSection({
   onRequestMinerCommandConfirm,
   onUnlockOverheatControl,
 }: MinerGridSectionProps) {
+  const PLACEHOLDER_ID = "__drag_placeholder__";
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
+  const [dragOverCardId, setDragOverCardId] = useState<string | null>(null);
+  const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
   const compactCellSx = { whiteSpace: "nowrap", px: 0.75, py: 0.5, lineHeight: 1.15 };
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const orderedCards = [...orderedMiners.map((m) => m.minerId)].sort((a, b) => {
+    const ai = minerOrder.indexOf(a);
+    const bi = minerOrder.indexOf(b);
+    const av = ai >= 0 ? ai : Number.MAX_SAFE_INTEGER;
+    const bv = bi >= 0 ? bi : Number.MAX_SAFE_INTEGER;
+    return av - bv;
+  });
+
+  const renderCardIds = (() => {
+    if (!draggedCardId) return orderedCards;
+    const withoutDragged = orderedCards.filter((id) => id !== draggedCardId);
+    const fallbackIndex = Math.max(0, Math.min(dragStartIndex ?? 0, withoutDragged.length));
+    const anchorIndex =
+      dragOverCardId && dragOverCardId !== draggedCardId
+        ? withoutDragged.indexOf(dragOverCardId)
+        : -1;
+    const insertAt = anchorIndex >= 0 ? anchorIndex : fallbackIndex;
+    withoutDragged.splice(insertAt, 0, PLACEHOLDER_ID);
+    return withoutDragged;
+  })();
+
+  const placeholderIndex = renderCardIds.indexOf(PLACEHOLDER_ID);
+
+  const cleanupDrag = () => {
+    setDraggedCardId(null);
+    setDragOverCardId(null);
+    setDragStartIndex(null);
+  };
 
   return (
     <Box>
@@ -161,17 +196,56 @@ export function MinerGridSection({
         container
         spacing={1.25}
         alignItems="stretch"
+        onDragOver={(event) => {
+          if (!draggedCardId) return;
+          event.preventDefault();
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          const droppedId = event.dataTransfer.getData("text/plain") || draggedCardId;
+          if (!droppedId) {
+            cleanupDrag();
+            return;
+          }
+          if (dragOverCardId && dragOverCardId !== droppedId) {
+            onReorderCard(droppedId, dragOverCardId);
+          } else if (placeholderIndex >= 0) {
+            onReorderCardToIndex(droppedId, placeholderIndex);
+          }
+          cleanupDrag();
+        }}
       >
         {(() => {
-          const orderedCards = [...orderedMiners.map((m) => m.minerId)].sort((a, b) => {
-            const ai = minerOrder.indexOf(a);
-            const bi = minerOrder.indexOf(b);
-            const av = ai >= 0 ? ai : Number.MAX_SAFE_INTEGER;
-            const bv = bi >= 0 ? bi : Number.MAX_SAFE_INTEGER;
-            return av - bv;
-          });
+          return renderCardIds.map((cardId) => {
+            if (cardId === PLACEHOLDER_ID) {
+              return (
+                <Grid key={PLACEHOLDER_ID} size={{ xs: 12, lg: 4 }} sx={{ display: "flex" }}>
+                  <Box
+                    onDragOver={(event) => {
+                      if (!draggedCardId) return;
+                      event.preventDefault();
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const droppedId = event.dataTransfer.getData("text/plain") || draggedCardId;
+                      if (droppedId) {
+                        const idx = renderCardIds.indexOf(PLACEHOLDER_ID);
+                        onReorderCardToIndex(droppedId, idx >= 0 ? idx : 0);
+                      }
+                      cleanupDrag();
+                    }}
+                    sx={{
+                      flex: 1,
+                      minHeight: 220,
+                      borderRadius: 2,
+                      border: "2px dashed rgba(56, 189, 248, 0.85)",
+                      bgcolor: "rgba(56, 189, 248, 0.07)",
+                    }}
+                  />
+                </Grid>
+              );
+            }
 
-          return orderedCards.map((cardId) => {
             const miner = orderedMiners.find((m) => m.minerId === cardId);
             if (!miner) return null;
             const metric = (miner.lastMetric ?? null) as MinerMetric | null;
@@ -343,9 +417,44 @@ export function MinerGridSection({
                 ? currentMh >= expectedMh * 0.9
                 : true;
 
+            const isDragged = draggedCardId === miner.minerId;
+            const isDropTarget = dragOverCardId === miner.minerId && draggedCardId !== miner.minerId;
+
             return (
-              <Grid key={miner.minerId} size={{ xs: 12, lg: 4 }} sx={{ display: "flex" }}>
+              <Grid
+                key={miner.minerId}
+                size={{ xs: 12, lg: 4 }}
+                sx={{ display: "flex" }}
+                data-miner-card="1"
+              >
                 <Paper
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", miner.minerId);
+                    // Let browser capture native drag preview first, then hide source card.
+                    window.requestAnimationFrame(() => {
+                      setDraggedCardId(miner.minerId);
+                      setDragOverCardId(null);
+                      setDragStartIndex(orderedCards.indexOf(miner.minerId));
+                    });
+                  }}
+                  onDragOver={(event) => {
+                    if (!draggedCardId || draggedCardId === miner.minerId) return;
+                    event.preventDefault();
+                    setDragOverCardId(miner.minerId);
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const droppedId = event.dataTransfer.getData("text/plain") || draggedCardId;
+                    if (droppedId && droppedId !== miner.minerId) {
+                      onReorderCard(droppedId, miner.minerId);
+                    }
+                    cleanupDrag();
+                  }}
+                  onDragEnd={() => {
+                    cleanupDrag();
+                  }}
                   sx={{
                     p: 1.1,
                     display: "flex",
@@ -361,6 +470,15 @@ export function MinerGridSection({
                         : hasOfflineBorder
                           ? theme.palette.grey[600]
                           : theme.palette.grey[500],
+                    cursor: "grab",
+                    visibility: isDragged ? "hidden" : "visible",
+                    outline: isDropTarget ? "2px dashed rgba(56, 189, 248, 0.8)" : "none",
+                    outlineOffset: isDropTarget ? 2 : 0,
+                    boxShadow: isDragged
+                      ? "0 12px 28px rgba(0, 0, 0, 0.32)"
+                      : isDropTarget
+                        ? "0 0 0 1px rgba(56, 189, 248, 0.36) inset"
+                        : undefined,
                   }}
                 >
                   <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
@@ -449,9 +567,17 @@ export function MinerGridSection({
                           {settingsIcon}
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Move to top">
-                        <IconButton color="primary" size="small" onClick={() => onMoveCardToTop(miner.minerId)}>
-                          <KeyboardArrowUpRoundedIcon fontSize="small" />
+                      <Tooltip title={uiLang === "uk" ? "Перетягни для зміни порядку" : "Drag to reorder"}>
+                        <IconButton
+                          color="primary"
+                          size="small"
+                          sx={{ cursor: "grab" }}
+                          onMouseDown={(event) => {
+                            // Keep drag-handle click from toggling other clickable controls in header.
+                            event.stopPropagation();
+                          }}
+                        >
+                          <DragIndicatorRoundedIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
                     </Stack>
