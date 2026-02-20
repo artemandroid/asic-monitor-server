@@ -81,6 +81,9 @@ export type Settings = {
   notifyRestartPrompt: boolean;
   notificationVisibleCount: number;
   criticalBatteryOffPercent: number;
+  dayTariffPrice: number;
+  nightTariffPrice: number;
+  greenTariffPrice: number;
 };
 
 export type Notification = {

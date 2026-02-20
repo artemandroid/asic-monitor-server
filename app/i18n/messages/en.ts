@@ -176,6 +176,18 @@ export const enMessages = {
   "warn": "WARN",
   "charging_fallback": "Charging fallback",
   "critical_battery_off_threshold_percent": "Critical battery OFF threshold (%)",
+  "day_tariff_price": "Day tariff price",
+  "night_tariff_price": "Night tariff price",
+  "green_tariff_price": "Green tariff price",
+  "today_energy": "Today Energy",
+  "consumed_today": "Consumed today",
+  "generated_today": "Generated today",
+  "import_day": "Grid import day",
+  "import_night": "Grid import night",
+  "export_today": "Export today",
+  "solar_coverage": "Solar coverage",
+  "estimated_cost_today": "Estimated cost today",
+  "consumption_now": "Consumption now",
   "flag_signal": "Flag signal",
 } as const;
 

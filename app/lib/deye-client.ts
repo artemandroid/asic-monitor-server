@@ -46,6 +46,7 @@ export type DeyeStationSnapshot = {
   batteryStatus: string | null;
   batteryDischargePowerKw: number | null;
   generationPowerKw: number | null;
+  consumptionPowerKw: number | null;
   apiSignals: Array<{
     key: string;
     value: string | number | boolean | null;
@@ -256,6 +257,13 @@ function parseStationPayload(stationId: number, payload: unknown): DeyeStationSn
     "totalPvPower",
     "activePower",
   ])?.value ?? null);
+  const consumptionPowerKw = toKw(pickNumberMatch(map, [
+    "consumptionPower",
+    "loadPower",
+    "totalLoadPower",
+    "homeLoadPower",
+    "loadActivePower",
+  ])?.value ?? null);
 
   const gridFlagKeys = [
     "gridOnline",
@@ -393,6 +401,7 @@ function parseStationPayload(stationId: number, payload: unknown): DeyeStationSn
     batteryStatus,
     batteryDischargePowerKw: batteryPowerKw,
     generationPowerKw,
+    consumptionPowerKw,
     apiSignals: extractApiSignals(payload),
     updatedAt: new Date().toISOString(),
     raw: payload,

@@ -20,6 +20,9 @@ export async function GET(request: NextRequest) {
     notifyRestartPrompt: settings.notifyRestartPrompt,
     notificationVisibleCount: settings.notificationVisibleCount,
     criticalBatteryOffPercent: settings.criticalBatteryOffPercent,
+    dayTariffPrice: settings.dayTariffPrice,
+    nightTariffPrice: settings.nightTariffPrice,
+    greenTariffPrice: settings.greenTariffPrice,
   });
 }
 
@@ -46,6 +49,9 @@ export async function PUT(request: NextRequest) {
     notifyRestartPrompt?: boolean;
     notificationVisibleCount?: number;
     criticalBatteryOffPercent?: number;
+    dayTariffPrice?: number;
+    nightTariffPrice?: number;
+    greenTariffPrice?: number;
   } = {};
 
   if (typeof body.autoRestartEnabled === "boolean") {
@@ -124,6 +130,27 @@ export async function PUT(request: NextRequest) {
   ) {
     payload.criticalBatteryOffPercent = body.criticalBatteryOffPercent;
   }
+  if (
+    typeof body.dayTariffPrice === "number" &&
+    Number.isFinite(body.dayTariffPrice) &&
+    body.dayTariffPrice >= 0
+  ) {
+    payload.dayTariffPrice = body.dayTariffPrice;
+  }
+  if (
+    typeof body.nightTariffPrice === "number" &&
+    Number.isFinite(body.nightTariffPrice) &&
+    body.nightTariffPrice >= 0
+  ) {
+    payload.nightTariffPrice = body.nightTariffPrice;
+  }
+  if (
+    typeof body.greenTariffPrice === "number" &&
+    Number.isFinite(body.greenTariffPrice) &&
+    body.greenTariffPrice >= 0
+  ) {
+    payload.greenTariffPrice = body.greenTariffPrice;
+  }
 
   const updated = await updateSettings(payload);
   return NextResponse.json({
@@ -139,5 +166,8 @@ export async function PUT(request: NextRequest) {
     notifyRestartPrompt: updated.notifyRestartPrompt,
     notificationVisibleCount: updated.notificationVisibleCount,
     criticalBatteryOffPercent: updated.criticalBatteryOffPercent,
+    dayTariffPrice: updated.dayTariffPrice,
+    nightTariffPrice: updated.nightTariffPrice,
+    greenTariffPrice: updated.greenTariffPrice,
   });
 }

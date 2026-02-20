@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { fetchDeyeStationSnapshot } from "@/app/lib/deye-client";
 import { fetchTuyaDevices, setTuyaSwitch } from "@/app/lib/tuya-client";
 import { getSettings } from "@/app/lib/settings";
+import { saveDeyeEnergySample } from "@/app/lib/deye-energy";
 
 const POWER_AUTOMATION_DEBOUNCE_MS = 45_000;
 const POWER_AUTOMATION_MIN_RUN_INTERVAL_MS = 15_000;
@@ -87,6 +88,7 @@ export async function runPowerAutomation(): Promise<void> {
       }),
       getSettings(),
     ]);
+    await saveDeyeEnergySample(station);
     const criticalOffBatteryPercent =
       typeof settings.criticalBatteryOffPercent === "number"
         ? settings.criticalBatteryOffPercent

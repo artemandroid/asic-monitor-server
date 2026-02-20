@@ -35,6 +35,9 @@ type GeneralSettings = {
   notifyRestartPrompt: boolean;
   notificationVisibleCount: number;
   criticalBatteryOffPercent: number;
+  dayTariffPrice: number;
+  nightTariffPrice: number;
+  greenTariffPrice: number;
 };
 
 type MinerSettingsPanel = {
@@ -95,6 +98,17 @@ type DeyeStationSnapshot = {
   batteryStatus: string | null;
   batteryDischargePowerKw: number | null;
   generationPowerKw: number | null;
+  consumptionPowerKw: number | null;
+  energyToday?: {
+    consumptionKwh: number;
+    generationKwh: number;
+    importKwhTotal: number;
+    importKwhDay: number;
+    importKwhNight: number;
+    exportKwh: number;
+    solarCoveragePercent: number;
+    estimatedNetCost: number;
+  };
   apiSignals: Array<{
     key: string;
     value: string | number | boolean | null;
@@ -792,11 +806,15 @@ export function useHomeController() {
           text: { key: null, value: null, parsed: null },
           power: { key: null, raw: null, kw: null, parsed: null },
           chargingFallbackParsed: null,
+          dischargingFallbackParsed: null,
         },
         batterySoc: prev?.batterySoc ?? null,
         batteryStatus: prev?.batteryStatus ?? null,
         batteryDischargePowerKw: prev?.batteryDischargePowerKw ?? null,
         generationPowerKw: prev?.generationPowerKw ?? null,
+        consumptionPowerKw: prev?.consumptionPowerKw ?? null,
+        energyToday: prev?.energyToday,
+        apiSignals: prev?.apiSignals ?? [],
         updatedAt: new Date().toISOString(),
         error: message,
       }));
@@ -948,6 +966,9 @@ export function useHomeController() {
         notifyRestartPrompt: boolean;
         notificationVisibleCount?: number;
         criticalBatteryOffPercent?: number;
+        dayTariffPrice?: number;
+        nightTariffPrice?: number;
+        greenTariffPrice?: number;
       };
       setGeneralSettingsDraft({
         minerSyncIntervalSec:
@@ -968,6 +989,18 @@ export function useHomeController() {
           typeof data.criticalBatteryOffPercent === "number"
             ? data.criticalBatteryOffPercent
             : 30,
+        dayTariffPrice:
+          typeof data.dayTariffPrice === "number"
+            ? data.dayTariffPrice
+            : 0,
+        nightTariffPrice:
+          typeof data.nightTariffPrice === "number"
+            ? data.nightTariffPrice
+            : 0,
+        greenTariffPrice:
+          typeof data.greenTariffPrice === "number"
+            ? data.greenTariffPrice
+            : 0,
       });
       setShowGeneralSettings(true);
     } catch (err) {

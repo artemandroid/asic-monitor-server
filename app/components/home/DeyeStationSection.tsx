@@ -46,6 +46,17 @@ type DeyeStationSnapshot = {
   batteryStatus: string | null;
   batteryDischargePowerKw: number | null;
   generationPowerKw: number | null;
+  consumptionPowerKw: number | null;
+  energyToday?: {
+    consumptionKwh: number;
+    generationKwh: number;
+    importKwhTotal: number;
+    importKwhDay: number;
+    importKwhNight: number;
+    exportKwh: number;
+    solarCoveragePercent: number;
+    estimatedNetCost: number;
+  };
   apiSignals: Array<{
     key: string;
     value: string | number | boolean | null;
@@ -175,6 +186,8 @@ export function DeyeStationSection({
   const generationLabelColor = hasGeneration ? positiveGreen : neutralGray;
 
   const gridPowerKw = deyeStation?.gridPowerKw ?? null;
+  const consumptionKw = deyeStation?.consumptionPowerKw ?? null;
+  const today = deyeStation?.energyToday;
   const isGridImport =
     typeof gridPowerKw === "number" ? gridPowerKw > 0.01 : false;
   const gridPowerLabel =
@@ -320,6 +333,69 @@ export function DeyeStationSection({
         <Typography variant="caption" color="error.main" sx={{ mt: 0.75, display: "block" }}>
           {t(uiLang, "deye_api_error")}: {deyeStation.error}
         </Typography>
+      ) : null}
+
+      {!deyeCollapsed ? (
+        <Box
+          sx={{
+            mt: 0.9,
+            pt: 0.85,
+            borderTop: (theme) => `1px dashed ${theme.palette.divider}`,
+          }}
+        >
+          <Typography variant="caption" sx={{ color: "text.primary", fontWeight: 700 }}>
+            {t(uiLang, "today_energy")}
+          </Typography>
+          <Box
+            sx={{
+              mt: 0.55,
+              display: "grid",
+              gap: 0.55,
+              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+            }}
+          >
+            <Typography variant="caption" color="text.secondary">
+              {t(uiLang, "consumed_today")}: <Box component="span" sx={{ color: "text.primary" }}>
+                {today ? `${today.consumptionKwh.toFixed(2)} kWh` : "-"}
+              </Box>
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {t(uiLang, "generated_today")}: <Box component="span" sx={{ color: "text.primary" }}>
+                {today ? `${today.generationKwh.toFixed(2)} kWh` : "-"}
+              </Box>
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {t(uiLang, "import_day")}: <Box component="span" sx={{ color: "text.primary" }}>
+                {today ? `${today.importKwhDay.toFixed(2)} kWh` : "-"}
+              </Box>
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {t(uiLang, "import_night")}: <Box component="span" sx={{ color: "text.primary" }}>
+                {today ? `${today.importKwhNight.toFixed(2)} kWh` : "-"}
+              </Box>
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {t(uiLang, "export_today")}: <Box component="span" sx={{ color: "text.primary" }}>
+                {today ? `${today.exportKwh.toFixed(2)} kWh` : "-"}
+              </Box>
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {t(uiLang, "solar_coverage")}: <Box component="span" sx={{ color: "text.primary" }}>
+                {today ? `${today.solarCoveragePercent.toFixed(1)}%` : "-"}
+              </Box>
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {t(uiLang, "estimated_cost_today")}: <Box component="span" sx={{ color: "text.primary" }}>
+                {today ? `${today.estimatedNetCost.toFixed(2)}` : "-"}
+              </Box>
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {t(uiLang, "consumption_now")}: <Box component="span" sx={{ color: "text.primary" }}>
+                {typeof consumptionKw === "number" ? `${consumptionKw.toFixed(2)} ${kwUnit}` : "-"}
+              </Box>
+            </Typography>
+          </Box>
+        </Box>
       ) : null}
 
       {!deyeCollapsed && signalRows.length > 0 ? (
