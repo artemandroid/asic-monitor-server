@@ -17,7 +17,7 @@ type NotificationsSectionProps = {
   groupedNotificationsCount: number;
   visibleGroupedNotifications: GroupedNotification[];
   bellIcon: ReactNode;
-  localizeNotificationMessage: (message: string) => string;
+  localizeNotificationMessage: (note: Notification) => string;
   restartActionStateForNote: (note: Notification) => RestartActionState;
   onToggleCollapsed: () => void;
   onRequestMinerCommandConfirm: (minerId: string, command: CommandType) => void;
@@ -120,7 +120,7 @@ export function NotificationsSection({
                 {note.count && note.count > 1 ? ` x${note.count}` : ""}
               </Typography>
               <Typography variant="body2" sx={{ mt: 0.4 }}>
-                {localizeNotificationMessage(note.message)}
+                {localizeNotificationMessage(note)}
               </Typography>
 
               {note.action === "RESTART" && note.minerId && (() => {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { requireWebAuth } from "@/app/lib/web-auth";
+import { getTuyaSnapshotCached } from "@/app/lib/tuya-cache";
 import { setTuyaSwitch } from "@/app/lib/tuya-client";
 
 type Body = {
@@ -25,6 +26,7 @@ export async function POST(request: NextRequest) {
 
   try {
     await setTuyaSwitch(body.deviceId, body.on, body.code ?? null);
+    await getTuyaSnapshotCached({ force: true, maxAgeMs: 0 });
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(

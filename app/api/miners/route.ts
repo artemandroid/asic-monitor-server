@@ -5,6 +5,8 @@ import type { NextRequest } from "next/server";
 import { getAllowedMinerIds } from "@/app/lib/access-config";
 import { requireWebAuth } from "@/app/lib/web-auth";
 
+const COMMAND_PENDING_TIMEOUT_MS = 12 * 60 * 1000;
+
 export async function GET(request: NextRequest) {
   const auth = requireWebAuth(request);
   if (auth instanceof NextResponse) return auth;
@@ -18,6 +20,19 @@ export async function GET(request: NextRequest) {
       email,
       miners.map((m: { id: string }) => m.id),
     );
+    const staleBefore = new Date(Date.now() - COMMAND_PENDING_TIMEOUT_MS);
+    await prisma.command.updateMany({
+      where: {
+        status: "PENDING",
+        type: { in: ["RESTART", "SLEEP", "WAKE"] },
+        createdAt: { lt: staleBefore },
+      },
+      data: {
+        status: "FAILED",
+        executedAt: new Date(),
+        error: "Command timed out while waiting for miner acknowledgement.",
+      },
+    });
     const pendingCommands = await prisma.command.findMany({
       where: {
         status: "PENDING", type: { in: ["RESTART", "SLEEP", "WAKE"] }, minerId: { in: [...allowedMinerIds] },
@@ -48,6 +63,7 @@ export async function GET(request: NextRequest) {
       autoPowerRestoreDelayMinutes: number;
       overheatProtectionEnabled: boolean;
       overheatShutdownTempC: number | null;
+      overheatSleepMinutes: number | null;
       overheatLocked: boolean;
       overheatLockedAt: Date | null;
       overheatLastTempC: number | null;
@@ -72,6 +88,7 @@ export async function GET(request: NextRequest) {
       autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes,
       overheatProtectionEnabled: miner.overheatProtectionEnabled,
       overheatShutdownTempC: miner.overheatShutdownTempC,
+      overheatSleepMinutes: miner.overheatSleepMinutes ?? 30,
       overheatLocked: miner.overheatLocked,
       overheatLockedAt: miner.overheatLockedAt?.toISOString() ?? null,
       overheatLastTempC: miner.overheatLastTempC,
@@ -109,7 +126,8 @@ export async function GET(request: NextRequest) {
           miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
         autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes ?? 10,
         overheatProtectionEnabled: miner.overheatProtectionEnabled ?? true,
-        overheatShutdownTempC: miner.overheatShutdownTempC ?? 84,
+        overheatShutdownTempC: miner.overheatShutdownTempC ?? 83,
+        overheatSleepMinutes: miner.overheatSleepMinutes ?? 30,
         overheatLocked: miner.overheatLocked ?? false,
         overheatLockedAt: miner.overheatLockedAt ?? null,
         overheatLastTempC: miner.overheatLastTempC ?? null,

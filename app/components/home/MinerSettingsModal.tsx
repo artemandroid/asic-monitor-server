@@ -9,6 +9,7 @@ import {
   DialogTitle,
   Divider,
   FormControlLabel,
+  MenuItem,
   Stack,
   Switch,
   TextField,
@@ -30,6 +31,7 @@ type MinerSettingsPanel = {
   autoPowerRestoreDelayMinutes: number;
   overheatProtectionEnabled: boolean;
   overheatShutdownTempC: number;
+  overheatSleepMinutes: number;
   overheatLocked: boolean;
   overheatLockedAt: string | null;
   overheatLastTempC: number | null;
@@ -130,25 +132,51 @@ export function MinerSettingsModal({
             label={t(uiLang, "lock_controls_on_overheat_until_manual_unlock")}
           />
 
-          <TextField
-            type="number"
-            label={t(uiLang, "overheat_shutdown_threshold_c")}
-            value={String(draft.overheatShutdownTempC)}
-            onChange={(e) =>
-              setDraft((prev) =>
-                prev
-                  ? { ...prev, overheatShutdownTempC: Number.parseFloat(e.target.value || "0") || 0 }
-                  : prev,
-              )
-            }
-          />
-          <PresetButtons
-            values={[84, 90, 95]}
-            onSelect={(preset) =>
-              setDraft((prev) => (prev ? { ...prev, overheatShutdownTempC: preset } : prev))
-            }
-            format={(preset) => `${preset}C`}
-          />
+          <Grid container spacing={1.5}>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                select
+                fullWidth
+                label={t(uiLang, "overheat_shutdown_threshold_c")}
+                value={String(draft.overheatShutdownTempC)}
+                onChange={(e) =>
+                  setDraft((prev) =>
+                    prev
+                      ? { ...prev, overheatShutdownTempC: Number.parseInt(e.target.value, 10) || 83 }
+                      : prev,
+                  )
+                }
+              >
+                {[83, 84, 85].map((v) => (
+                  <MenuItem key={v} value={String(v)}>
+                    {v}C
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                type="number"
+                fullWidth
+                label={t(uiLang, "overheat_sleep_minutes")}
+                value={String(draft.overheatSleepMinutes)}
+                onChange={(e) =>
+                  setDraft((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          overheatSleepMinutes: Math.max(
+                            5,
+                            Math.min(180, Number.parseInt(e.target.value || "30", 10) || 30),
+                          ),
+                        }
+                      : prev,
+                  )
+                }
+                inputProps={{ min: 5, max: 180, step: 1 }}
+              />
+            </Grid>
+          </Grid>
 
           {draft.overheatLocked && (
             <Typography variant="body2" color="error.main" fontWeight={700}>

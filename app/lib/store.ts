@@ -22,6 +22,7 @@ type Store = {
       autoPowerRestoreDelayMinutes?: number;
       overheatProtectionEnabled?: boolean;
       overheatShutdownTempC?: number | null;
+      overheatSleepMinutes?: number | null;
       overheatLocked?: boolean;
       overheatLockedAt?: string | null;
       overheatLastTempC?: number | null;
@@ -48,8 +49,8 @@ const store: Store =
     settings: {
       autoRestartEnabled: true,
       minerSyncIntervalSec: 60,
-      deyeSyncIntervalSec: 60,
-      tuyaSyncIntervalSec: 60,
+      deyeSyncIntervalSec: 360,
+      tuyaSyncIntervalSec: 3600,
       restartDelayMinutes: 10,
       postRestartGraceMinutes: 10,
       lowHashrateThresholdGh: 10,

@@ -9,7 +9,7 @@ import { commands, minerStates, notifications } from "@/app/lib/store";
 
 const NOTIFY_AUTO_RESTART = "AUTO_RESTART";
 const NOTIFY_RESTART_PROMPT = "LOW_HASHRATE_PROMPT";
-const NOTIFY_OVERHEAT_LOCK = "OVERHEAT_LOCK";
+const NOTIFY_OVERHEAT_COOLDOWN = "OVERHEAT_COOLDOWN";
 const NOTIFY_BOARD_HASHRATE_DRIFT = "BOARD_HASHRATE_DRIFT";
 const AUTO_RESTART_TEMP_DISABLED = false;
 const BOARD_HASHRATE_DRIFT_PERCENT = 10;
@@ -151,7 +151,8 @@ export async function POST(request: NextRequest) {
     const postRestartGraceMs =
       Math.max(upserted.postRestartGraceMinutes ?? 10, 0) * 60 * 1000;
 
-    const overheatThreshold = upserted.overheatShutdownTempC ?? 84;
+    const overheatThreshold = upserted.overheatShutdownTempC ?? 83;
+    const overheatSleepMinutes = Math.max(5, Math.floor(upserted.overheatSleepMinutes ?? 30));
     const overheatTriggered =
       upserted.overheatProtectionEnabled === true &&
       typeof maxTempC === "number" &&
@@ -184,12 +185,16 @@ export async function POST(request: NextRequest) {
           },
         });
       }
+      const wakeAt = new Date(now.getTime() + overheatSleepMinutes * 60 * 1000);
       await prisma.notification.create({
         data: {
-          type: NOTIFY_OVERHEAT_LOCK,
+          type: NOTIFY_OVERHEAT_COOLDOWN,
           minerId,
           action: null,
-          message: `Overheat lock on ${minerId}: ${maxTempC?.toFixed(1)}C >= ${overheatThreshold.toFixed(1)}C. Manual Unlock control is required.`,
+          message:
+            `Overheat protection on ${minerId}: ${maxTempC?.toFixed(1)}C >= ${overheatThreshold.toFixed(1)}C. ` +
+            `SLEEP command issued for ${overheatSleepMinutes} minutes (until ${wakeAt.toISOString()}). ` +
+            `Then WAKE will be sent automatically. If power is unavailable at wake time, WAKE will be deferred until power is restored.`,
         },
       });
     }
@@ -315,7 +320,8 @@ export async function POST(request: NextRequest) {
         existing?.autoPowerOnBatteryAbovePercent ?? existing?.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: existing?.autoPowerRestoreDelayMinutes ?? 10,
       overheatProtectionEnabled: existing?.overheatProtectionEnabled ?? true,
-      overheatShutdownTempC: existing?.overheatShutdownTempC ?? 84,
+      overheatShutdownTempC: existing?.overheatShutdownTempC ?? 83,
+      overheatSleepMinutes: existing?.overheatSleepMinutes ?? 30,
       overheatLocked: existing?.overheatLocked ?? false,
       overheatLockedAt: existing?.overheatLockedAt ?? null,
       overheatLastTempC: existing?.overheatLastTempC ?? null,
@@ -334,7 +340,8 @@ export async function POST(request: NextRequest) {
     const promptCooldownMs = Math.max(settings.restartDelayMinutes, 0) * 60 * 1000;
     const postRestartGraceMs =
       Math.max(existing?.postRestartGraceMinutes ?? 10, 0) * 60 * 1000;
-    const overheatThreshold = existing?.overheatShutdownTempC ?? 84;
+    const overheatThreshold = existing?.overheatShutdownTempC ?? 83;
+    const overheatSleepMinutes = Math.max(5, Math.floor(existing?.overheatSleepMinutes ?? 30));
     const overheatTriggered =
       (existing?.overheatProtectionEnabled ?? true) &&
       typeof maxTempC === "number" &&
@@ -367,8 +374,11 @@ export async function POST(request: NextRequest) {
       }
       notifications.unshift({
         id: crypto.randomUUID(),
-        type: NOTIFY_OVERHEAT_LOCK,
-        message: `Overheat lock on ${minerId}: ${maxTempC?.toFixed(1)}C >= ${overheatThreshold.toFixed(1)}C. Manual Unlock control is required.`,
+        type: NOTIFY_OVERHEAT_COOLDOWN,
+        message:
+          `Overheat protection on ${minerId}: ${maxTempC?.toFixed(1)}C >= ${overheatThreshold.toFixed(1)}C. ` +
+          `SLEEP command issued for ${overheatSleepMinutes} minutes. Then WAKE will be sent automatically. ` +
+          `If power is unavailable at wake time, WAKE will be deferred until power is restored.`,
         minerId,
         createdAt: nowIso,
       });

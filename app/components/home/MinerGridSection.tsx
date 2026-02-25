@@ -151,7 +151,6 @@ export function MinerGridSection({
   const [dragOverCardId, setDragOverCardId] = useState<string | null>(null);
   const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
   const compactCellSx = { whiteSpace: "nowrap", px: 0.75, py: 0.5, lineHeight: 1.15 };
-
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -277,15 +276,15 @@ export function MinerGridSection({
               control?.phase ?? serverPendingPhase ?? (hasServerWarmup ? "WARMING_UP" : null);
             const pendingAction = pendingActionByMiner[miner.minerId];
             const minerMode = typeof metric?.minerMode === "number" ? metric.minerMode : null;
-            const isSleepingLike =
-              effectivePhase === "SLEEPING" ||
-              minerMode === 1;
-            const statusLabel = isSleepingLike
-              ? t(uiLang, "sleep")
-              : online === true
-                ? t(uiLang, "online")
-                : online === false
-                  ? t(uiLang, "offline")
+            const isActuallyOffline = online === false;
+            const isActuallySleeping = online === true && minerMode === 1;
+            const isSleepingLike = isActuallySleeping;
+            const statusLabel = isActuallyOffline
+              ? t(uiLang, "offline")
+              : isSleepingLike
+                ? t(uiLang, "sleep")
+                : online === true
+                  ? t(uiLang, "online")
                   : t(uiLang, "unknown");
             const statusColor: "success" | "default" =
               online === true && !isSleepingLike ? "success" : "default";
@@ -297,9 +296,10 @@ export function MinerGridSection({
             const overheatLocked = miner.overheatLocked === true;
 
             const buttonsLocked =
+              online === true &&
               effectivePhase === "RESTARTING" ||
-              effectivePhase === "WAKING" ||
-              effectivePhase === "WARMING_UP";
+              (online === true && effectivePhase === "WAKING") ||
+              (online === true && effectivePhase === "WARMING_UP");
             const hasPendingAction = Boolean(pendingAction);
             const restartDisabled = hasPendingAction || buttonsLocked || overheatLocked || online !== true || isSleepingLike;
             const sleepDisabled = hasPendingAction || buttonsLocked || online !== true || isSleepingLike;
@@ -308,12 +308,12 @@ export function MinerGridSection({
             const restartDisabledFinal = restartDisabled || overheatLocked;
             const restartInProgress =
               pendingAction === "RESTART" ||
-              effectivePhase === "RESTARTING" ||
-              (effectivePhase === "WARMING_UP" && control?.source === "RESTART");
+              (online === true && effectivePhase === "RESTARTING") ||
+              (online === true && effectivePhase === "WARMING_UP" && control?.source === "RESTART");
             const wakeInProgress =
               pendingAction === "WAKE" ||
-              effectivePhase === "WAKING" ||
-              (effectivePhase === "WARMING_UP" &&
+              (online === true && effectivePhase === "WAKING") ||
+              (online === true && effectivePhase === "WARMING_UP" &&
                 (control?.source === "WAKE" || control?.source === "POWER_ON"));
             const actionButtonSx = {
               borderRadius: "8px !important",
@@ -329,6 +329,10 @@ export function MinerGridSection({
 
             const alias = minerAliases[miner.minerId]?.trim();
             const titleText = alias || `${metric?.asicType ?? "Antminer"} ${miner.minerId}`;
+            const firmwareHelpText =
+              uiLang === "uk"
+                ? "Поширені варіанти: Stock/Original (рідна), Vnish, Braiins, Hiveon, ASIC.to, MSKMiner."
+                : "Common variants: Stock/Original (vendor), Vnish, Braiins, Hiveon, ASIC.to, MSKMiner.";
             const linkedDevice = deviceById.get(tuyaBindingByMiner[miner.minerId] ?? "");
             const linkedDeviceVariant: "filled" | "outlined" =
               linkedDevice?.on === true ? "filled" : "outlined";
@@ -796,11 +800,23 @@ export function MinerGridSection({
                   <Stack
                     direction="row"
                     alignItems="center"
-                    justifyContent="flex-end"
+                    justifyContent="space-between"
                     spacing={1}
                     sx={{ width: "100%" }}
                   >
-                    <Stack direction="row" spacing={0.6} flexWrap="wrap" sx={{ ml: "auto", flexShrink: 0, justifyContent: "flex-end" }}>
+                    {metric?.firmware ? (
+                      <Tooltip title={`${firmwareHelpText} Current: ${metric.firmware}`}>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          noWrap
+                          sx={{ maxWidth: 220, cursor: "help" }}
+                        >
+                          Firmware: {metric.firmware}
+                        </Typography>
+                      </Tooltip>
+                    ) : null}
+                    <Stack direction="row" spacing={0.6} flexWrap="wrap" sx={{ flexShrink: 0, justifyContent: "flex-end" }}>
                       <Button
                         size="small"
                         variant={restartDisabledFinal ? "outlined" : "contained"}

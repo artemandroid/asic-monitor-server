@@ -71,7 +71,7 @@ export function GeneralSettingsModal({
             onChange={(e) =>
               setDraft((prev) =>
                 prev
-                  ? { ...prev, deyeSyncIntervalSec: Math.max(5, Number.parseInt(e.target.value || "60", 10) || 60) }
+                  ? { ...prev, deyeSyncIntervalSec: Math.max(5, Number.parseInt(e.target.value || "360", 10) || 360) }
                   : prev,
               )
             }
@@ -85,7 +85,7 @@ export function GeneralSettingsModal({
             onChange={(e) =>
               setDraft((prev) =>
                 prev
-                  ? { ...prev, tuyaSyncIntervalSec: Math.max(5, Number.parseInt(e.target.value || "60", 10) || 60) }
+                  ? { ...prev, tuyaSyncIntervalSec: Math.max(5, Number.parseInt(e.target.value || "3600", 10) || 3600) }
                   : prev,
               )
             }

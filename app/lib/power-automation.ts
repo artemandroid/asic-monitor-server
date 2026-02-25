@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { fetchDeyeStationSnapshot } from "@/app/lib/deye-client";
-import { fetchTuyaDevices, setTuyaSwitch } from "@/app/lib/tuya-client";
+import { getTuyaSnapshotCached } from "@/app/lib/tuya-cache";
+import { setTuyaSwitch } from "@/app/lib/tuya-client";
 import { getSettings } from "@/app/lib/settings";
 import { saveDeyeEnergySample } from "@/app/lib/deye-energy";
 
@@ -8,6 +9,12 @@ const POWER_AUTOMATION_DEBOUNCE_MS = 45_000;
 const POWER_AUTOMATION_MIN_RUN_INTERVAL_MS = 15_000;
 const AUTO_ON_MIN_BATTERY_PERCENT = 60;
 const DEFAULT_CRITICAL_OFF_BATTERY_PERCENT = 30;
+const DEFAULT_OVERHEAT_SLEEP_MINUTES = 30;
+const COMMAND_SLEEP = "SLEEP";
+const COMMAND_WAKE = "WAKE";
+const NOTIFY_POWER_AUTOMATION = "POWER_AUTOMATION";
+const NOTIFY_OVERHEAT_WAKE_DEFERRED = "OVERHEAT_WAKE_DEFERRED";
+const NOTIFY_OVERHEAT_WAKE_SENT = "OVERHEAT_WAKE_SENT";
 
 function extractWirePower(station: Awaited<ReturnType<typeof fetchDeyeStationSnapshot>>): number | null {
   const candidates = station.apiSignals.filter((signal) => /(^|\.|_)wirepower$/i.test(signal.key));
@@ -27,6 +34,8 @@ type AutomationState = {
   prevGridOnline: boolean | null;
   lockByKey: Record<string, number>;
   thresholdAutoOffAtByMiner: Record<string, number>;
+  overheatWakePendingByMiner: Record<string, boolean>;
+  autoOffRequestedByMiner: Record<string, boolean>;
 };
 
 const globalState = globalThis as unknown as { __powerAutomationState?: AutomationState };
@@ -38,6 +47,8 @@ const state: AutomationState =
     prevGridOnline: null,
     lockByKey: {},
     thresholdAutoOffAtByMiner: {},
+    overheatWakePendingByMiner: {},
+    autoOffRequestedByMiner: {},
   };
 
 if (!globalState.__powerAutomationState) {
@@ -49,16 +60,53 @@ function shouldSkipRun(nowMs: number): boolean {
   return nowMs - state.lastRunAt < POWER_AUTOMATION_MIN_RUN_INTERVAL_MS;
 }
 
-async function notify(message: string, minerId?: string) {
+async function notify(message: string, minerId?: string, type = NOTIFY_POWER_AUTOMATION) {
   if (!prisma) return;
   await prisma.notification.create({
     data: {
-      type: "POWER_AUTOMATION",
+      type,
       message,
       minerId: minerId ?? null,
       action: null,
     },
   });
+}
+
+async function clearOverheatLock(minerId: string) {
+  if (!prisma) return;
+  await prisma.miner.updateMany({
+    where: { id: minerId },
+    data: {
+      overheatLocked: false,
+      overheatLockedAt: null,
+    },
+  });
+}
+
+async function enqueueMinerCommand(minerId: string, type: typeof COMMAND_SLEEP | typeof COMMAND_WAKE) {
+  if (!prisma) return false;
+  const pending = await prisma.command.findFirst({
+    where: { minerId, type, status: "PENDING" },
+    select: { id: true },
+  });
+  if (pending) return false;
+
+  await prisma.command.create({
+    data: {
+      id: crypto.randomUUID(),
+      minerId,
+      type,
+      status: "PENDING",
+      createdAt: new Date(),
+    },
+  });
+  if (type === COMMAND_WAKE) {
+    await prisma.miner.updateMany({
+      where: { id: minerId },
+      data: { lastRestartAt: new Date() },
+    });
+  }
+  return true;
 }
 
 export async function runPowerAutomation(): Promise<void> {
@@ -68,11 +116,16 @@ export async function runPowerAutomation(): Promise<void> {
   state.lastRunAt = nowMs;
 
   try {
-    const [station, tuya, miners, settings] = await Promise.all([
+    const [station, tuyaResult, miners, settings] = await Promise.all([
       fetchDeyeStationSnapshot(),
-      fetchTuyaDevices(),
+      getTuyaSnapshotCached(),
       prisma.miner.findMany({
-        where: { boundTuyaDeviceId: { not: null } },
+        where: {
+          OR: [
+            { boundTuyaDeviceId: { not: null } },
+            { overheatLocked: true },
+          ],
+        },
         select: {
           id: true,
           boundTuyaDeviceId: true,
@@ -84,10 +137,15 @@ export async function runPowerAutomation(): Promise<void> {
           autoPowerOnBatteryAbovePercent: true,
           autoPowerRestoreDelayMinutes: true,
           overheatLocked: true,
+          overheatLockedAt: true,
+          overheatSleepMinutes: true,
+          lastMetric: true,
         },
       }),
       getSettings(),
     ]);
+    const tuya = tuyaResult.snapshot;
+    const tuyaUnavailable = Boolean(tuyaResult.error);
     await saveDeyeEnergySample(station);
     const criticalOffBatteryPercent =
       typeof settings.criticalBatteryOffPercent === "number"
@@ -110,21 +168,36 @@ export async function runPowerAutomation(): Promise<void> {
     const devicesById = new Map(tuya.devices.map((d) => [d.id, d]));
     const now = Date.now();
 
+    let didApplyTuyaCommand = false;
     for (const miner of miners) {
       const deviceId = miner.boundTuyaDeviceId ?? "";
-      if (!deviceId) continue;
+      const hasBoundDevice = Boolean(deviceId);
       const device = devicesById.get(deviceId);
-      if (!device || !device.online || !device.switchCode) continue;
+      const deviceUnavailable = !device || !device.online || !device.switchCode;
+      const lastMetric =
+        miner.lastMetric && typeof miner.lastMetric === "object"
+          ? (miner.lastMetric as { minerMode?: number; online?: boolean })
+          : null;
+      const minerMode = typeof lastMetric?.minerMode === "number" ? lastMetric.minerMode : null;
+      const isSleepingLike = minerMode === 1;
 
       const overheatLocked = miner.overheatLocked === true;
+      const overheatSleepMinutes = Math.max(
+        5,
+        Math.floor(miner.overheatSleepMinutes ?? DEFAULT_OVERHEAT_SLEEP_MINUTES),
+      );
+      const overheatSleepDurationMs = overheatSleepMinutes * 60 * 1000;
       const generationConfigured = typeof miner.autoPowerOffGenerationBelowKw === "number";
       const generationAutoOnConfigured = typeof miner.autoPowerOnGenerationAboveKw === "number";
-      const generationTooLowForAutoOn =
+      const generationTooLowForAutoOnRaw =
         generationAutoOnConfigured &&
         (
           station.generationPowerKw === null ||
           station.generationPowerKw < (miner.autoPowerOnGenerationAboveKw ?? 0)
         );
+      // Auto-ON generation threshold is relevant only when grid is unavailable.
+      // When grid is back, we should not block power restore by generation checks.
+      const generationTooLowForAutoOn = gridNow === true ? false : generationTooLowForAutoOnRaw;
       const batteryConfigured = typeof miner.autoPowerOffBatteryBelowPercent === "number";
       const batteryAutoOnThreshold =
         typeof miner.autoPowerOnBatteryAbovePercent === "number"
@@ -159,9 +232,11 @@ export async function runPowerAutomation(): Promise<void> {
         (!generationConfigured || shouldOffByGeneration);
       const shouldOff =
         shouldOffByCriticalBattery ||
-        overheatLocked ||
         shouldOffByGridLoss ||
         shouldOffByThreshold;
+      if (!shouldOff || device?.on === false) {
+        delete state.autoOffRequestedByMiner[miner.id];
+      }
 
       const shouldOnImmediate =
         !overheatLocked &&
@@ -178,11 +253,84 @@ export async function runPowerAutomation(): Promise<void> {
           (typeof batteryAutoOnThreshold === "number"
             ? batteryAutoOnThreshold
             : AUTO_ON_MIN_BATTERY_PERCENT);
-      const batteryBlocksAutoOn =
+      const batteryBlocksAutoOnRaw =
         !generationAutoOnConfigured && batteryTooLowForAutoOn && !wirePowerNonZero;
+      // When grid is back, battery constraints should not block auto power restore.
+      const batteryBlocksAutoOn = gridNow === true ? false : batteryBlocksAutoOnRaw;
       const autoOnBlocked = generationTooLowForAutoOn || batteryBlocksAutoOn;
 
+      // Overheat scenario: sleep miner for 30 minutes, then auto-wake.
+      if (overheatLocked) {
+        const lockedAtMs = miner.overheatLockedAt ? new Date(miner.overheatLockedAt).getTime() : NaN;
+        if (Number.isFinite(lockedAtMs) && now >= lockedAtMs + overheatSleepDurationMs) {
+          const hasPowerPolicyOff =
+            shouldOffByCriticalBattery || shouldOffByGridLoss || shouldOffByThreshold;
+          const powerUnavailableForWake =
+            hasBoundDevice &&
+            (
+              hasPowerPolicyOff ||
+              tuyaUnavailable ||
+              !device ||
+              !device.online ||
+              !device.switchCode ||
+              device.on !== true
+            );
+
+          if (powerUnavailableForWake) {
+            if (!state.overheatWakePendingByMiner[miner.id]) {
+              state.overheatWakePendingByMiner[miner.id] = true;
+              await notify(
+                `Overheat cooldown finished for ${miner.id}, but WAKE is deferred: power is unavailable (switch OFF or blocked by battery/grid policy). WAKE will be sent automatically after power is restored.`,
+                miner.id,
+                NOTIFY_OVERHEAT_WAKE_DEFERRED,
+              );
+            }
+            continue;
+          }
+
+          const queuedWake = await enqueueMinerCommand(miner.id, COMMAND_WAKE);
+          await clearOverheatLock(miner.id);
+          const hadDeferredWake = state.overheatWakePendingByMiner[miner.id] === true;
+          delete state.overheatWakePendingByMiner[miner.id];
+          await notify(
+            hadDeferredWake
+              ? `Power restored for ${miner.id}. Deferred WAKE sent after ${overheatSleepMinutes}-minute overheat cooldown.`
+              : `${overheatSleepMinutes}-minute overheat cooldown finished for ${miner.id}. WAKE command sent automatically.`,
+            miner.id,
+            NOTIFY_OVERHEAT_WAKE_SENT,
+          );
+          if (!queuedWake) {
+            // WAKE may already be pending; keep flow consistent and unlock overheat state.
+            continue;
+          }
+          continue;
+        }
+        // Keep miner sleeping during cooldown window.
+        continue;
+      }
+
+      if (!hasBoundDevice) continue;
+
+      if (shouldOff && (tuyaUnavailable || deviceUnavailable)) {
+        const lockKey = `${miner.id}:SLEEP_FALLBACK`;
+        const lockedUntil = state.lockByKey[lockKey] ?? 0;
+        if (now >= lockedUntil && !isSleepingLike) {
+          state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
+          const queued = await enqueueMinerCommand(miner.id, COMMAND_SLEEP);
+          if (queued) {
+            await notify(
+              `Tuya unavailable for ${miner.id}; fallback SLEEP command queued.`,
+              miner.id,
+            );
+          }
+        }
+        continue;
+      }
+
       if (shouldOff && device.on !== false) {
+        if (state.autoOffRequestedByMiner[miner.id] === true) {
+          continue;
+        }
         const lockKey = `${miner.id}:OFF`;
         const lockedUntil = state.lockByKey[lockKey] ?? 0;
         if (now >= lockedUntil) {
@@ -193,6 +341,7 @@ export async function runPowerAutomation(): Promise<void> {
             delete state.thresholdAutoOffAtByMiner[miner.id];
           }
           await setTuyaSwitch(device.id, false, device.switchCode);
+          didApplyTuyaCommand = true;
           if (shouldOffByCriticalBattery) {
             await notify(
               `Auto OFF requested for ${device.name}: grid is OFF and battery < ${criticalOffBatteryPercent}%.`,
@@ -200,6 +349,23 @@ export async function runPowerAutomation(): Promise<void> {
             );
           } else {
             await notify(`Auto OFF requested for ${device.name}.`, miner.id);
+          }
+          state.autoOffRequestedByMiner[miner.id] = true;
+        }
+        continue;
+      }
+
+      if (!autoOnBlocked && (shouldOnImmediate || shouldOnWhenGridOnline) && (tuyaUnavailable || deviceUnavailable)) {
+        const lockKey = `${miner.id}:WAKE_FALLBACK`;
+        const lockedUntil = state.lockByKey[lockKey] ?? 0;
+        if (now >= lockedUntil && isSleepingLike && !overheatLocked) {
+          state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
+          const queued = await enqueueMinerCommand(miner.id, COMMAND_WAKE);
+          if (queued) {
+            await notify(
+              `Tuya unavailable for ${miner.id}; fallback WAKE command queued.`,
+              miner.id,
+            );
           }
         }
         continue;
@@ -212,6 +378,7 @@ export async function runPowerAutomation(): Promise<void> {
           state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
           delete state.thresholdAutoOffAtByMiner[miner.id];
           await setTuyaSwitch(device.id, true, device.switchCode);
+          didApplyTuyaCommand = true;
           await notify(`Auto ON requested for ${device.name} because grid is available.`, miner.id);
         }
         continue;
@@ -235,6 +402,7 @@ export async function runPowerAutomation(): Promise<void> {
             state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
             delete state.thresholdAutoOffAtByMiner[miner.id];
             await setTuyaSwitch(device.id, true, device.switchCode);
+            didApplyTuyaCommand = true;
             await notify(
               `Auto ON requested for ${device.name} after threshold recovery delay.`,
               miner.id,
@@ -246,6 +414,10 @@ export async function runPowerAutomation(): Promise<void> {
       if (!shouldOffByThreshold && device.on === true) {
         delete state.thresholdAutoOffAtByMiner[miner.id];
       }
+    }
+
+    if (didApplyTuyaCommand) {
+      await getTuyaSnapshotCached({ force: true, maxAgeMs: 0 });
     }
   } catch {
     // ignore power automation failures; they are surfaced by UI fetchers if needed.

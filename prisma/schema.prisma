@@ -32,7 +32,8 @@ model Miner {
   autoPowerOnBatteryAbovePercent Float?
   autoPowerRestoreDelayMinutes Int @default(10)
   overheatProtectionEnabled Boolean @default(true)
-  overheatShutdownTempC Float @default(84)
+  overheatShutdownTempC Float @default(83)
+  overheatSleepMinutes Int @default(30)
   overheatLocked Boolean @default(false)
   overheatLockedAt DateTime?
   overheatLastTempC Float?
@@ -62,8 +63,8 @@ model Settings {
   id                       Int      @id @default(1)
   autoRestartEnabled       Boolean  @default(true)
   minerSyncIntervalSec     Int      @default(60)
-  deyeSyncIntervalSec      Int      @default(60)
-  tuyaSyncIntervalSec      Int      @default(60)
+  deyeSyncIntervalSec      Int      @default(360)
+  tuyaSyncIntervalSec      Int      @default(3600)
   restartDelayMinutes      Int      @default(10)
   postRestartGraceMinutes  Int      @default(10)
   lowHashrateThresholdGh   Float    @default(10)
@@ -74,6 +75,14 @@ model Settings {
   criticalBatteryOffPercent Float   @default(30)
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
+}
+
+model TuyaSnapshotCache {
+  id        Int      @id @default(1)
+  snapshot  Json
+  fetchedAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model DeyeEnergySample {

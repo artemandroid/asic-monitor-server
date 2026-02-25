@@ -90,6 +90,21 @@ export function TuyaSection({
     d.on === null ? "outlined" : d.on ? "filled" : "outlined";
   const statusColor = (d: TuyaDevice): "success" | "default" =>
     d.on === true ? "success" : "default";
+  const actionButtonSx = {
+    borderRadius: "8px !important",
+    minWidth: 74,
+    textTransform: "none",
+    fontWeight: 700,
+    "&.Mui-disabled": {
+      bgcolor: "transparent",
+      color: "#9ca3af",
+      borderColor: "#d1d5db",
+    },
+  } as const;
+  const compactCellSx = {
+    py: 0.45,
+    px: 1,
+  } as const;
 
   return (
     <Paper sx={{ p: 1.25, mb: 1.25 }}>
@@ -159,17 +174,17 @@ export function TuyaSection({
           <Table stickyHeader size="small">
             <TableHead>
               <TableRow>
-                <TableCell>{t(uiLang, "automat")}</TableCell>
-                <TableCell align="center">{t(uiLang, "st")}</TableCell>
-                <TableCell align="center">{t(uiLang, "pwr")}</TableCell>
-                <TableCell align="center">{t(uiLang, "bind_asic")}</TableCell>
-                <TableCell align="center">{t(uiLang, "ctrl")}</TableCell>
+                <TableCell sx={compactCellSx}>{t(uiLang, "automat")}</TableCell>
+                <TableCell align="center" sx={compactCellSx}>{t(uiLang, "st")}</TableCell>
+                <TableCell align="center" sx={compactCellSx}>{t(uiLang, "pwr")}</TableCell>
+                <TableCell align="center" sx={compactCellSx}>{t(uiLang, "bind_asic")}</TableCell>
+                <TableCell align="center" sx={compactCellSx}>{t(uiLang, "ctrl")}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {visibleTuyaDevices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} sx={{ color: "text.secondary" }}>
+                  <TableCell colSpan={5} sx={{ ...compactCellSx, color: "text.secondary" }}>
                     {t(uiLang, "no_devices_yet")}
                   </TableCell>
                 </TableRow>
@@ -182,12 +197,12 @@ export function TuyaSection({
 
                   return (
                     <TableRow key={device.id} hover>
-                      <TableCell>
+                      <TableCell sx={compactCellSx}>
                         <Typography variant="body2" fontWeight={700} noWrap maxWidth={260}>
                           {device.name}
                         </Typography>
                       </TableCell>
-                      <TableCell align="center">
+                      <TableCell align="center" sx={compactCellSx}>
                         <Chip
                           size="small"
                           color={statusColor(device)}
@@ -202,10 +217,10 @@ export function TuyaSection({
                           }}
                         />
                       </TableCell>
-                      <TableCell align="center">
+                      <TableCell align="center" sx={compactCellSx}>
                         {typeof device.powerW === "number" ? `${device.powerW.toFixed(0)}W` : "-"}
                       </TableCell>
-                      <TableCell align="center">
+                      <TableCell align="center" sx={compactCellSx}>
                         <FormControl size="small" sx={{ minWidth: 150 }}>
                           <Select
                             value={linkedMinerId}
@@ -230,13 +245,14 @@ export function TuyaSection({
                           </Select>
                         </FormControl>
                       </TableCell>
-                      <TableCell align="center">
+                      <TableCell align="center" sx={compactCellSx}>
                         <Stack direction="row" spacing={0.6} justifyContent="center">
                           <Button
                             size="small"
                             variant={onDisabled ? "outlined" : "contained"}
                             color="success"
                             disabled={onDisabled}
+                            sx={actionButtonSx}
                             title={device.switchCode ? `Code: ${device.switchCode}` : "No switch code"}
                             onClick={() => onRequestTuyaSwitchConfirm(device, true)}
                           >
@@ -247,6 +263,7 @@ export function TuyaSection({
                             variant={offDisabled ? "outlined" : "contained"}
                             color="error"
                             disabled={offDisabled}
+                            sx={actionButtonSx}
                             title={device.switchCode ? `Code: ${device.switchCode}` : "No switch code"}
                             onClick={() => onRequestTuyaSwitchConfirm(device, false)}
                           >

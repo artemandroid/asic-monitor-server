@@ -11,8 +11,8 @@ import type {
 } from "@/app/lib/types";
 
 const DEFAULT_MINER_SYNC_MS = 60_000;
-const DEFAULT_DEYE_SYNC_MS = 60_000;
-const DEFAULT_TUYA_SYNC_MS = 60_000;
+const DEFAULT_DEYE_SYNC_MS = 360_000;
+const DEFAULT_TUYA_SYNC_MS = 3_600_000;
 const LOW_HASHRATE_RESTART_GRACE_MS = 10 * 60 * 1000;
 const CONTROL_ACTION_LOCK_MS = 10 * 60 * 1000;
 const NOTIFICATION_VISIBLE_COUNT_KEY = "mc_notification_visible_count";
@@ -51,6 +51,7 @@ type MinerSettingsPanel = {
   autoPowerRestoreDelayMinutes: number;
   overheatProtectionEnabled: boolean;
   overheatShutdownTempC: number;
+  overheatSleepMinutes: number;
   overheatLocked: boolean;
   overheatLockedAt: string | null;
   overheatLastTempC: number | null;
@@ -228,7 +229,7 @@ export function useHomeController() {
   const [statusBadgesVertical, setStatusBadgesVertical] = useState(false);
   const refreshMainRef = useRef<() => Promise<void>>(async () => {});
   const fetchDeyeStationRef = useRef<() => Promise<void>>(async () => {});
-  const fetchTuyaDevicesRef = useRef<() => Promise<void>>(async () => {});
+  const fetchTuyaDevicesRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
   const processedCommandResultIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -311,19 +312,8 @@ export function useHomeController() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem("mc_miner_control_states");
-    if (!raw) {
-      setControlStateLoaded(true);
-      return;
-    }
-    try {
-      const parsed = JSON.parse(raw) as Record<string, MinerControlState>;
-      if (parsed && typeof parsed === "object") {
-        setMinerControlStates(parsed);
-      }
-    } catch {
-      // ignore corrupted storage
-    }
+    // Do not restore ephemeral control phases after page reload to avoid stale spinners.
+    window.localStorage.removeItem("mc_miner_control_states");
     setControlStateLoaded(true);
   }, []);
 
@@ -352,7 +342,8 @@ export function useHomeController() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!controlStateLoaded) return;
-    window.localStorage.setItem("mc_miner_control_states", JSON.stringify(minerControlStates));
+    // Keep control state in-memory only.
+    window.localStorage.removeItem("mc_miner_control_states");
   }, [minerControlStates, controlStateLoaded]);
 
   useEffect(() => {
@@ -680,6 +671,22 @@ export function useHomeController() {
         const online = metric?.online === true;
         const ready = isHashrateReady(metric);
         const sleeping = isSleepingState(metric);
+        const hasPendingServerCommand =
+          miner.pendingCommandType === "RESTART" ||
+          miner.pendingCommandType === "SLEEP" ||
+          miner.pendingCommandType === "WAKE";
+
+        if (!hasPendingServerCommand && online && !sleeping) {
+          if (
+            current.phase === "RESTARTING" ||
+            current.phase === "WAKING" ||
+            current.phase === "WARMING_UP" ||
+            current.phase === "SLEEPING"
+          ) {
+            changed = true;
+            continue;
+          }
+        }
 
         if (now - current.since > CONTROL_ACTION_LOCK_MS * 6) {
           changed = true;
@@ -821,14 +828,14 @@ export function useHomeController() {
     }
   };
 
-  const fetchTuyaDevices = async () => {
+  const fetchTuyaDevices = async (force = false) => {
     if (!getAuthState()) {
       router.replace("/auth");
       return;
     }
     setTuyaLoading(true);
     try {
-      const res = await fetch("/api/tuya/devices");
+      const res = await fetch(force ? "/api/tuya/devices?force=1" : "/api/tuya/devices");
       const payload = (await res.json()) as TuyaSnapshot | { error?: string };
       if (!res.ok) {
         throw new Error(
@@ -857,6 +864,8 @@ export function useHomeController() {
       router.replace("/auth");
       return;
     }
+    const linkedMinerId =
+      Object.entries(tuyaBindingByMiner).find(([, devId]) => devId === device.id)?.[0] ?? null;
     try {
       setPendingTuyaByDevice((prev) => ({ ...prev, [device.id]: on ? "ON" : "OFF" }));
       const res = await fetch("/api/tuya/commands", {
@@ -874,8 +883,6 @@ export function useHomeController() {
       }
       // If this automat is bound to a miner, reflect expected miner power state
       // immediately so control buttons stay locked during power/warm-up transitions.
-      const linkedMinerId =
-        Object.entries(tuyaBindingByMiner).find(([, devId]) => devId === device.id)?.[0] ?? null;
       if (linkedMinerId) {
         setMinerControlStates((prev) => ({
           ...prev,
@@ -886,9 +893,39 @@ export function useHomeController() {
           },
         }));
       }
-      await fetchTuyaDevices();
+      await fetchTuyaDevices(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
+      if (linkedMinerId) {
+        const fallbackType: CommandType = on ? "WAKE" : "SLEEP";
+        try {
+          const fallbackRes = await fetch("/api/commands/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ minerId: linkedMinerId, type: fallbackType }),
+          });
+          if (fallbackRes.ok) {
+            pushClientNotification(
+              `Tuya is unavailable. Fallback ${fallbackType} command queued for ${linkedMinerId}.`,
+            );
+            if (fallbackType === "SLEEP") {
+              setMinerControlStates((prev) => ({
+                ...prev,
+                [linkedMinerId]: { phase: "SLEEPING", since: Date.now() },
+              }));
+            } else {
+              setMinerControlStates((prev) => ({
+                ...prev,
+                [linkedMinerId]: { phase: "WAKING", since: Date.now(), source: "WAKE" },
+              }));
+            }
+            await fetchMiners();
+            return;
+          }
+        } catch {
+          // Fall through and report original Tuya error below.
+        }
+      }
       pushClientNotification(message);
     } finally {
       setPendingTuyaByDevice((prev) => {
@@ -936,7 +973,7 @@ export function useHomeController() {
   };
 
   const refreshAll = async () => {
-    await Promise.all([refreshMain(), fetchDeyeStation(), fetchTuyaDevices()]);
+    await Promise.all([refreshMain(), fetchDeyeStation(), fetchTuyaDevices(true)]);
   };
 
   refreshMainRef.current = refreshMain;
@@ -968,9 +1005,9 @@ export function useHomeController() {
         minerSyncIntervalSec:
           typeof data.minerSyncIntervalSec === "number" ? data.minerSyncIntervalSec : 60,
         deyeSyncIntervalSec:
-          typeof data.deyeSyncIntervalSec === "number" ? data.deyeSyncIntervalSec : 60,
+          typeof data.deyeSyncIntervalSec === "number" ? data.deyeSyncIntervalSec : 360,
         tuyaSyncIntervalSec:
-          typeof data.tuyaSyncIntervalSec === "number" ? data.tuyaSyncIntervalSec : 60,
+          typeof data.tuyaSyncIntervalSec === "number" ? data.tuyaSyncIntervalSec : 3600,
         restartDelayMinutes: data.restartDelayMinutes,
         hashrateDeviationPercent: data.hashrateDeviationPercent,
         notifyAutoRestart: data.notifyAutoRestart,
@@ -1073,7 +1110,11 @@ export function useHomeController() {
         overheatShutdownTempC:
           typeof data.overheatShutdownTempC === "number"
             ? data.overheatShutdownTempC
-            : 84,
+            : 83,
+        overheatSleepMinutes:
+          typeof data.overheatSleepMinutes === "number"
+            ? data.overheatSleepMinutes
+            : 30,
         overheatLocked: data.overheatLocked === true,
         overheatLockedAt: data.overheatLockedAt ?? null,
         overheatLastTempC:
@@ -1121,6 +1162,7 @@ export function useHomeController() {
             autoPowerRestoreDelayMinutes: minerSettingsDraft.autoPowerRestoreDelayMinutes,
             overheatProtectionEnabled: minerSettingsDraft.overheatProtectionEnabled,
             overheatShutdownTempC: minerSettingsDraft.overheatShutdownTempC,
+            overheatSleepMinutes: minerSettingsDraft.overheatSleepMinutes,
           }),
         },
       );
@@ -1378,7 +1420,8 @@ export function useHomeController() {
     return { enabled: true };
   };
 
-  const localizeNotificationMessage = (message: string): string => {
+  const localizeNotificationMessage = (note: Notification): string => {
+    const message = note.message;
     const autoRestart = /^Hashrate on (.+) dropped to ([\d.]+) GH\/s\. Auto-restart issued\.$/.exec(message);
     if (autoRestart) {
       return t(uiLang, "hashrate_dropped_auto_restart_issued", {
@@ -1396,16 +1439,50 @@ export function useHomeController() {
         hashrate: restartPrompt[2],
       });
     }
-    const overheat =
-      /^Overheat lock on (.+): ([\d.]+)C >= ([\d.]+)C\. Manual Unlock control is required\.$/.exec(
-        message,
-      );
-    if (overheat) {
-      return t(uiLang, "overheat_lock_manual_unlock_required", {
-        minerId: overheat[1],
-        tempC: overheat[2],
-        limitC: overheat[3],
-      });
+    if (note.type === "OVERHEAT_COOLDOWN") {
+      const overheatCooldown =
+        /^Overheat protection on (.+): ([\d.]+)C >= ([\d.]+)C\. SLEEP command issued for (\d+) minutes(?: \(until (.+)\))?\. Then WAKE will be sent automatically\. If power is unavailable at wake time, WAKE will be deferred until power is restored\.$/.exec(
+          message,
+        );
+      if (overheatCooldown) {
+        return t(uiLang, "overheat_cooldown_started_auto_wake", {
+          minerId: overheatCooldown[1],
+          tempC: overheatCooldown[2],
+          limitC: overheatCooldown[3],
+          minutes: overheatCooldown[4],
+        });
+      }
+    }
+    if (note.type === "OVERHEAT_WAKE_DEFERRED") {
+      const deferredWake =
+        /^Overheat cooldown finished for (.+), but WAKE is deferred: power is unavailable \(switch OFF or blocked by battery\/grid policy\)\. WAKE will be sent automatically after power is restored\.$/.exec(
+          message,
+        );
+      if (deferredWake) {
+        return t(uiLang, "overheat_wake_deferred_power_unavailable", {
+          minerId: deferredWake[1],
+        });
+      }
+    }
+    if (note.type === "OVERHEAT_WAKE_SENT") {
+      const wakeAfterDeferred =
+        /^Power restored for (.+)\. Deferred WAKE sent after (\d+)-minute overheat cooldown\.$/.exec(
+          message,
+        );
+      if (wakeAfterDeferred) {
+        return t(uiLang, "overheat_wake_sent_after_power_restore", {
+          minerId: wakeAfterDeferred[1],
+        });
+      }
+      const wakeAfterCooldown =
+        /^(\d+)-minute overheat cooldown finished for (.+)\. WAKE command sent automatically\.$/.exec(
+          message,
+        );
+      if (wakeAfterCooldown) {
+        return t(uiLang, "overheat_wake_sent_after_cooldown", {
+          minerId: wakeAfterCooldown[2],
+        });
+      }
     }
     const boardDrift = /^Board hashrate drift on (.+): (.+)\.$/.exec(message);
     if (boardDrift) {
@@ -1440,6 +1517,15 @@ export function useHomeController() {
     if (autoOff) {
       return t(uiLang, "auto_off_requested_generic", {
         deviceName: autoOff[1],
+      });
+    }
+    const autoOffRetry =
+      /^Auto OFF re-requested for (.+): ON conditions are still not met, so auto-shutdown remains active\.$/.exec(
+        message,
+      );
+    if (autoOffRetry) {
+      return t(uiLang, "auto_off_rerequested_conditions_not_met", {
+        deviceName: autoOffRetry[1],
       });
     }
     const autoOnGrid = /^Auto ON requested for (.+) because grid is available\.$/.exec(message);
@@ -1486,11 +1572,15 @@ export function useHomeController() {
       const wakeCmd = msg.includes("Command WAKE ");
       const restartCmd = msg.includes("Command RESTART ");
       if (!ok && !failed) continue;
+      const createdAtMs = new Date(note.createdAt).getTime();
+      if (!Number.isFinite(createdAtMs)) continue;
+      // Ignore old command result notifications on reload to prevent stale spinners.
+      if (now - createdAtMs > CONTROL_ACTION_LOCK_MS) continue;
 
       if (ok && sleepCmd) {
         setMinerControlStates((prev) => ({
           ...prev,
-          [note.minerId!]: { phase: "SLEEPING", since: now },
+          [note.minerId!]: { phase: "SLEEPING", since: createdAtMs },
         }));
         continue;
       }
@@ -1498,7 +1588,7 @@ export function useHomeController() {
       if (ok && wakeCmd) {
         setMinerControlStates((prev) => ({
           ...prev,
-          [note.minerId!]: { phase: "WARMING_UP", since: now, source: "WAKE" },
+          [note.minerId!]: { phase: "WARMING_UP", since: createdAtMs, source: "WAKE" },
         }));
         continue;
       }
@@ -1506,7 +1596,7 @@ export function useHomeController() {
       if (ok && restartCmd) {
         setMinerControlStates((prev) => ({
           ...prev,
-          [note.minerId!]: { phase: "WARMING_UP", since: now, source: "RESTART" },
+          [note.minerId!]: { phase: "WARMING_UP", since: createdAtMs, source: "RESTART" },
         }));
         continue;
       }

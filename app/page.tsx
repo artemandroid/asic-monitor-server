@@ -23,22 +23,23 @@ const MinerGridSection = dynamic(
 function Home() {
   const home = useHomeController();
   const themeMode = useAppThemeMode();
-  const [notificationsPanelWidth, setNotificationsPanelWidth] = useState(() => {
-    if (typeof window === "undefined") return 420;
-    const raw = window.localStorage.getItem(NOTIFICATIONS_PANEL_WIDTH_KEY);
-    if (!raw) return 420;
-    const parsed = Number.parseInt(raw, 10);
-    if (Number.isFinite(parsed) && parsed >= 280 && parsed <= 900) {
-      return parsed;
-    }
-    return 420;
-  });
+  const [notificationsPanelWidth, setNotificationsPanelWidth] = useState(420);
   const [isResizingNotifications, setIsResizingNotifications] = useState(false);
   const resizeStartXRef = useRef(0);
   const resizeStartWidthRef = useRef(420);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(NOTIFICATIONS_PANEL_WIDTH_KEY);
+    if (raw) {
+      const parsed = Number.parseInt(raw, 10);
+      if (Number.isFinite(parsed) && parsed >= 280 && parsed <= 900) {
+        window.requestAnimationFrame(() => {
+          setNotificationsPanelWidth(parsed);
+        });
+      }
+    }
+
     const panel = window.document.getElementById("notifications-panel");
     if (!panel) return;
     const observer = new ResizeObserver((entries) => {

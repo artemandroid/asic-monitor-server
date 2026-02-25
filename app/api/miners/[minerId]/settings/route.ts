@@ -37,7 +37,8 @@ export async function GET(_: NextRequest, { params }: Params) {
         miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes,
       overheatProtectionEnabled: miner.overheatProtectionEnabled,
-      overheatShutdownTempC: miner.overheatShutdownTempC ?? 84,
+      overheatShutdownTempC: miner.overheatShutdownTempC ?? 83,
+      overheatSleepMinutes: miner.overheatSleepMinutes ?? 30,
       overheatLocked: miner.overheatLocked,
       overheatLockedAt: miner.overheatLockedAt?.toISOString() ?? null,
       overheatLastTempC: miner.overheatLastTempC ?? null,
@@ -66,7 +67,8 @@ export async function GET(_: NextRequest, { params }: Params) {
         miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes ?? 10,
       overheatProtectionEnabled: miner.overheatProtectionEnabled ?? true,
-      overheatShutdownTempC: miner.overheatShutdownTempC ?? 84,
+      overheatShutdownTempC: miner.overheatShutdownTempC ?? 83,
+      overheatSleepMinutes: miner.overheatSleepMinutes ?? 30,
       overheatLocked: miner.overheatLocked ?? false,
       overheatLockedAt: miner.overheatLockedAt ?? null,
       overheatLastTempC: miner.overheatLastTempC ?? null,
@@ -100,6 +102,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     autoPowerRestoreDelayMinutes?: number;
     overheatProtectionEnabled?: boolean;
     overheatShutdownTempC?: number;
+    overheatSleepMinutes?: number;
   } = {};
 
   if (typeof body.autoRestartEnabled === "boolean") {
@@ -188,9 +191,17 @@ export async function PUT(request: NextRequest, { params }: Params) {
   if (
     typeof body.overheatShutdownTempC === "number" &&
     Number.isFinite(body.overheatShutdownTempC) &&
-    body.overheatShutdownTempC > 0
+    [83, 84, 85].includes(Math.floor(body.overheatShutdownTempC))
   ) {
-    patch.overheatShutdownTempC = body.overheatShutdownTempC;
+    patch.overheatShutdownTempC = Math.floor(body.overheatShutdownTempC);
+  }
+  if (
+    typeof body.overheatSleepMinutes === "number" &&
+    Number.isFinite(body.overheatSleepMinutes) &&
+    body.overheatSleepMinutes >= 5 &&
+    body.overheatSleepMinutes <= 180
+  ) {
+    patch.overheatSleepMinutes = Math.floor(body.overheatSleepMinutes);
   }
 
   try {
@@ -243,7 +254,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
         updated.autoPowerOnBatteryAbovePercent ?? updated.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: updated.autoPowerRestoreDelayMinutes,
       overheatProtectionEnabled: updated.overheatProtectionEnabled,
-      overheatShutdownTempC: updated.overheatShutdownTempC ?? 84,
+      overheatShutdownTempC: updated.overheatShutdownTempC ?? 83,
+      overheatSleepMinutes: updated.overheatSleepMinutes ?? 30,
       overheatLocked: updated.overheatLocked,
       overheatLockedAt: updated.overheatLockedAt?.toISOString() ?? null,
       overheatLastTempC: updated.overheatLastTempC ?? null,
@@ -270,7 +282,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
       autoPowerOnBatteryAbovePercent: null,
       autoPowerRestoreDelayMinutes: 10,
       overheatProtectionEnabled: true,
-      overheatShutdownTempC: 84,
+      overheatShutdownTempC: 83,
+      overheatSleepMinutes: 30,
       overheatLocked: false,
       overheatLockedAt: null,
       overheatLastTempC: null,
@@ -344,6 +357,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (typeof patch.overheatShutdownTempC === "number") {
       existing.overheatShutdownTempC = patch.overheatShutdownTempC;
     }
+    if (typeof patch.overheatSleepMinutes === "number") {
+      existing.overheatSleepMinutes = patch.overheatSleepMinutes;
+    }
     minerStates.set(id, existing);
     return NextResponse.json({
       minerId: existing.minerId,
@@ -359,7 +375,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
         existing.autoPowerOnBatteryAbovePercent ?? existing.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: existing.autoPowerRestoreDelayMinutes ?? 10,
       overheatProtectionEnabled: existing.overheatProtectionEnabled ?? true,
-      overheatShutdownTempC: existing.overheatShutdownTempC ?? 84,
+      overheatShutdownTempC: existing.overheatShutdownTempC ?? 83,
+      overheatSleepMinutes: existing.overheatSleepMinutes ?? 30,
       overheatLocked: existing.overheatLocked ?? false,
       overheatLockedAt: existing.overheatLockedAt ?? null,
       overheatLastTempC: existing.overheatLastTempC ?? null,

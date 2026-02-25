@@ -48,6 +48,7 @@ export type MinerState = {
   autoPowerRestoreDelayMinutes?: number;
   overheatProtectionEnabled?: boolean;
   overheatShutdownTempC?: number | null;
+  overheatSleepMinutes?: number | null;
   overheatLocked?: boolean;
   overheatLockedAt?: string | null;
   overheatLastTempC?: number | null;
