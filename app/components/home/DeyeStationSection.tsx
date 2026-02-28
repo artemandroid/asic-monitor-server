@@ -148,7 +148,7 @@ export function DeyeStationSection({
     typeof generatedTodayKwh === "number" &&
     Number.isFinite(generatedTodayKwh) &&
     automatsTodayConsumptionKwh > 0
-      ? `${Math.min(100, (generatedTodayKwh / automatsTodayConsumptionKwh) * 100).toFixed(1)}%`
+      ? `${Math.round(Math.min(100, (generatedTodayKwh / automatsTodayConsumptionKwh) * 100))}%`
       : "-";
 
   const gridPowerKw = deyeStation?.gridPowerKw ?? null;
