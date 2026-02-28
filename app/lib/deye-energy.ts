@@ -1,16 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
-import type { DeyeStationSnapshot } from "@/app/lib/deye-client";
-
-export type DeyeEnergyTodaySummary = {
-  consumptionKwh: number;
-  generationKwh: number;
-  importKwhTotal: number;
-  importKwhDay: number;
-  importKwhNight: number;
-  exportKwh: number;
-  solarCoveragePercent: number;
-  estimatedNetCost: number;
-};
+import type { DeyeEnergyTodaySummary, DeyeStationSnapshot } from "@/app/lib/deye-types";
 
 type EnergySampleLike = {
   generationPowerKw: number | null;
@@ -35,6 +24,11 @@ function floorToMinute(date: Date): Date {
 
 function round2(value: number): number {
   return Number(value.toFixed(2));
+}
+
+function normalizeGenerationDayKwh(value?: number | null): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  return value;
 }
 
 function getDayKey(date: Date): string {
@@ -72,10 +66,13 @@ function getMemorySamplesFrom(startOfDay: Date): EnergySampleLike[] {
   return samples;
 }
 
-function summarizeSamples(samples: EnergySampleLike[]): DeyeEnergyTodaySummary | null {
-  if (samples.length === 0) return null;
+function summarizeSamples(
+  samples: EnergySampleLike[],
+  generationDayKwh: number | null = null,
+): DeyeEnergyTodaySummary | null {
+  if (samples.length === 0 && generationDayKwh === null) return null;
 
-  let generationKwh = 0;
+  let generationFromSamplesKwh = 0;
   let consumptionKwh = 0;
   let importKwhTotal = 0;
   let exportKwh = 0;
@@ -83,7 +80,7 @@ function summarizeSamples(samples: EnergySampleLike[]): DeyeEnergyTodaySummary |
   for (const sample of samples) {
     const generationKw = sample.generationPowerKw;
     if (typeof generationKw === "number" && Number.isFinite(generationKw) && generationKw > 0) {
-      generationKwh += generationKw / 60;
+      generationFromSamplesKwh += generationKw / 60;
     }
 
     const consumptionKw = sample.consumptionPowerKw;
@@ -101,12 +98,13 @@ function summarizeSamples(samples: EnergySampleLike[]): DeyeEnergyTodaySummary |
     }
   }
 
+  const effectiveGenerationKwh = generationDayKwh ?? generationFromSamplesKwh;
   const solarCoveragePercent =
-    consumptionKwh > 0 ? Math.min(100, (generationKwh / consumptionKwh) * 100) : 0;
+    consumptionKwh > 0 ? Math.min(100, (effectiveGenerationKwh / consumptionKwh) * 100) : 0;
 
   return {
     consumptionKwh: round2(consumptionKwh),
-    generationKwh: round2(generationKwh),
+    generationKwh: round2(effectiveGenerationKwh),
     importKwhTotal: round2(importKwhTotal),
     importKwhDay: round2(importKwhTotal),
     importKwhNight: 0,
@@ -145,7 +143,10 @@ export async function saveDeyeEnergySample(snapshot: DeyeStationSnapshot): Promi
   }
 }
 
-export async function getDeyeEnergyTodaySummary(): Promise<DeyeEnergyTodaySummary | null> {
+export async function getDeyeEnergyTodaySummary(
+  options?: { generationDayKwh?: number | null },
+): Promise<DeyeEnergyTodaySummary | null> {
+  const generationDayKwh = normalizeGenerationDayKwh(options?.generationDayKwh);
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
@@ -160,11 +161,11 @@ export async function getDeyeEnergyTodaySummary(): Promise<DeyeEnergyTodaySummar
       },
     });
 
-    const fromDb = summarizeSamples(samples);
+    const fromDb = summarizeSamples(samples, generationDayKwh);
     if (fromDb) return fromDb;
   } catch {
     // If DB is temporarily unavailable, keep UI metrics from in-memory samples.
   }
 
-  return summarizeSamples(getMemorySamplesFrom(startOfDay));
+  return summarizeSamples(getMemorySamplesFrom(startOfDay), generationDayKwh);
 }

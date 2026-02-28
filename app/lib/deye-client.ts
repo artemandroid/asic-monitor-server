@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { FETCH_TIMEOUT_MS } from "@/app/lib/constants";
+import {
+  DEYE_BASE_URL_DEFAULT,
+  DEYE_HISTORY_DAY_TIME_ZONE_DEFAULT,
+  DEYE_HISTORY_GENERATION_CACHE_TTL_MS,
+  FETCH_TIMEOUT_MS,
+} from "@/app/lib/constants";
+import type { DeyeStationSnapshot } from "@/app/lib/deye-types";
 import { useGlobalSlice } from "@/app/lib/global-state";
 
 type DeyeApiResponse = {
@@ -10,55 +16,15 @@ type DeyeApiResponse = {
   [key: string]: unknown;
 };
 
-export type DeyeStationSnapshot = {
-  stationId: number;
-  gridOnline: boolean | null;
-  gridStateText: string | null;
-  gridPowerKw: number | null;
-  gridSignals: {
-    source:
-      | "wire_power"
-      | "flag"
-      | "text"
-      | "power"
-      | "charging_fallback"
-      | "discharging_fallback"
-      | "cached_previous"
-      | "none";
-    flag: {
-      key: string | null;
-      raw: string | number | boolean | null;
-      parsed: boolean | null;
-    };
-    text: {
-      key: string | null;
-      value: string | null;
-      parsed: boolean | null;
-    };
-    power: {
-      key: string | null;
-      raw: number | null;
-      kw: number | null;
-      parsed: boolean | null;
-    };
-    chargingFallbackParsed: boolean | null;
-    dischargingFallbackParsed: boolean | null;
-  };
-  batterySoc: number | null;
-  batteryStatus: string | null;
-  batteryDischargePowerKw: number | null;
-  generationPowerKw: number | null;
-  consumptionPowerKw: number | null;
-  apiSignals: Array<{
-    key: string;
-    value: string | number | boolean | null;
-  }>;
-  updatedAt: string;
-  raw: unknown;
-};
-
-const DEFAULT_BASE_URL = "https://eu1-developer.deyecloud.com/v1.0";
 const lastKnownGridByStation = useGlobalSlice<Map<number, boolean>>("deyeGridCache", () => new Map());
+const globalDeyeState = globalThis as unknown as {
+  __deyeHistoryGenerationCache?: {
+    timeZone: string;
+    dayKey: string;
+    fetchedAtMs: number;
+    generationKwh: number | null;
+  };
+};
 
 function normalizeKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -226,6 +192,38 @@ function toKw(value: number | null): number | null {
   return value;
 }
 
+function round2(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+function resolveHistoryDayTimeZone(): string {
+  const preferred =
+    getEnv("DEYE_HISTORY_DAY_TIME_ZONE") ||
+    getEnv("APP_TIME_ZONE") ||
+    getEnv("TZ") ||
+    DEYE_HISTORY_DAY_TIME_ZONE_DEFAULT;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: preferred }).format(new Date());
+    return preferred;
+  } catch {
+    return DEYE_HISTORY_DAY_TIME_ZONE_DEFAULT;
+  }
+}
+
+function dateKeyInTimeZone(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((p) => p.type === "year")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+  if (!year || !month || !day) return date.toISOString().slice(0, 10);
+  return `${year}-${month}-${day}`;
+}
+
 function parseStationPayload(stationId: number, payload: unknown): DeyeStationSnapshot {
   const map = new Map<string, unknown>();
   collectCandidates(payload, map);
@@ -261,6 +259,21 @@ function parseStationPayload(stationId: number, payload: unknown): DeyeStationSn
     "solarPower",
     "totalPvPower",
   ])?.value ?? null);
+  const generationDayRaw = pickNumberMatch(map, [
+    "generationDay",
+    "dayGeneration",
+    "todayGeneration",
+    "generationToday",
+    "pvGenerationDay",
+    "todayPvGeneration",
+    "todayYield",
+    "eToday",
+    "todayEnergy",
+  ])?.value ?? null;
+  const generationDayKwh =
+    generationDayRaw !== null && Number.isFinite(generationDayRaw) && generationDayRaw >= 0
+      ? generationDayRaw
+      : null;
   const consumptionPowerKw = toKw(pickNumberMatch(map, [
     "consumptionPower",
     "loadPower",
@@ -405,6 +418,7 @@ function parseStationPayload(stationId: number, payload: unknown): DeyeStationSn
     batteryStatus,
     batteryDischargePowerKw: batteryPowerKw,
     generationPowerKw,
+    generationDayKwh,
     consumptionPowerKw,
     apiSignals: extractApiSignals(payload),
     updatedAt: new Date().toISOString(),
@@ -477,7 +491,7 @@ async function getAccessToken(baseUrl: string, appId: string, appSecret: string)
 }
 
 export async function fetchDeyeStationSnapshot(): Promise<DeyeStationSnapshot> {
-  const baseUrl = getEnv("DEYE_BASE_URL") || DEFAULT_BASE_URL;
+  const baseUrl = getEnv("DEYE_BASE_URL") || DEYE_BASE_URL_DEFAULT;
   const appId = getEnv("DEYE_APP_ID");
   const appSecret = getEnv("DEYE_APP_SECRET");
   const stationIdRaw = getEnv("DEYE_STATION_ID");
@@ -504,4 +518,100 @@ export async function fetchDeyeStationSnapshot(): Promise<DeyeStationSnapshot> {
     throw new Error(`Deye station/latest failed (${code}): ${String(msg)}`);
   }
   return parseStationPayload(stationId, latestJson.data ?? latestJson);
+}
+
+export async function fetchDeyeTodayGenerationKwhFromHistory(): Promise<number | null> {
+  const now = new Date();
+  const timeZone = resolveHistoryDayTimeZone();
+  const dayKey = dateKeyInTimeZone(now, timeZone);
+  const cached = globalDeyeState.__deyeHistoryGenerationCache;
+  if (
+    cached &&
+    cached.timeZone === timeZone &&
+    cached.dayKey === dayKey &&
+    now.getTime() - cached.fetchedAtMs < DEYE_HISTORY_GENERATION_CACHE_TTL_MS
+  ) {
+    return cached.generationKwh;
+  }
+
+  const baseUrl = getEnv("DEYE_BASE_URL") || DEYE_BASE_URL_DEFAULT;
+  const appId = getEnv("DEYE_APP_ID");
+  const appSecret = getEnv("DEYE_APP_SECRET");
+  const stationIdRaw = getEnv("DEYE_STATION_ID");
+  const stationId = Number.parseInt(stationIdRaw, 10);
+  if (!appId || !appSecret || !Number.isFinite(stationId)) return null;
+
+  try {
+    const token = await getAccessToken(baseUrl, appId, appSecret);
+    const historyResp = await fetch(`${baseUrl}/station/history`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `bearer ${token}`,
+      },
+      body: JSON.stringify({
+        stationId,
+        granularity: 1,
+        startAt: dayKey,
+        endAt: dayKey,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    const historyJson = (await historyResp.json().catch(() => ({}))) as DeyeApiResponse & {
+      stationDataItems?: unknown;
+    };
+    if (!historyResp.ok || historyJson.success === false) {
+      throw new Error(`station/history failed (${String(historyJson.code ?? historyResp.status)})`);
+    }
+
+    const rawItems = Array.isArray(historyJson.stationDataItems)
+      ? historyJson.stationDataItems
+      : Array.isArray((historyJson.data as { stationDataItems?: unknown } | undefined)?.stationDataItems)
+        ? ((historyJson.data as { stationDataItems?: unknown[] }).stationDataItems ?? [])
+        : [];
+
+    const points = rawItems
+      .map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const row = item as Record<string, unknown>;
+        const tsSec = maybeNumber(row.timeStamp);
+        const powerKw = toKw(maybeNumber(row.generationPower));
+        if (tsSec === null || powerKw === null) return null;
+        if (!Number.isFinite(tsSec) || !Number.isFinite(powerKw)) return null;
+        return { tsSec, powerKw };
+      })
+      .filter((point): point is { tsSec: number; powerKw: number } => point !== null)
+      .sort((a, b) => a.tsSec - b.tsSec);
+
+    let generationKwh: number | null = null;
+    if (points.length >= 2) {
+      let sumKwh = 0;
+      for (let i = 1; i < points.length; i += 1) {
+        const prev = points[i - 1];
+        const curr = points[i];
+        const deltaHours = (curr.tsSec - prev.tsSec) / 3600;
+        if (!Number.isFinite(deltaHours) || deltaHours <= 0 || deltaHours > 1) continue;
+        const avgKw = (prev.powerKw + curr.powerKw) / 2;
+        sumKwh += avgKw * deltaHours;
+      }
+      generationKwh = sumKwh >= 0 ? round2(sumKwh) : null;
+    }
+
+    globalDeyeState.__deyeHistoryGenerationCache = {
+      timeZone,
+      dayKey,
+      fetchedAtMs: now.getTime(),
+      generationKwh,
+    };
+    return generationKwh;
+  } catch {
+    globalDeyeState.__deyeHistoryGenerationCache = {
+      timeZone,
+      dayKey,
+      fetchedAtMs: now.getTime(),
+      generationKwh: null,
+    };
+    return null;
+  }
 }

@@ -11,6 +11,7 @@ import {
   type MinerState,
   type Notification,
 } from "@/app/lib/types";
+import type { DeyeStationSnapshot } from "@/app/lib/deye-types";
 import {
   CONTROL_ACTION_LOCK_MS,
   DEFAULT_DEYE_SYNC_MS,
@@ -55,63 +56,6 @@ type MinerSettingsPanel = {
   overheatLockedAt: string | null;
   overheatLastTempC: number | null;
   expectedHashrate: number | null;
-};
-
-type DeyeStationSnapshot = {
-  stationId: number;
-  gridOnline: boolean | null;
-  gridStateText: string | null;
-  gridPowerKw: number | null;
-  gridSignals: {
-    source:
-      | "wire_power"
-      | "flag"
-      | "text"
-      | "power"
-      | "charging_fallback"
-      | "discharging_fallback"
-      | "cached_previous"
-      | "none";
-    flag: {
-      key: string | null;
-      raw: string | number | boolean | null;
-      parsed: boolean | null;
-    };
-    text: {
-      key: string | null;
-      value: string | null;
-      parsed: boolean | null;
-    };
-    power: {
-      key: string | null;
-      raw: number | null;
-      kw: number | null;
-      parsed: boolean | null;
-    };
-    chargingFallbackParsed: boolean | null;
-    dischargingFallbackParsed: boolean | null;
-  };
-  batterySoc: number | null;
-  batteryStatus: string | null;
-  batteryDischargePowerKw: number | null;
-  generationPowerKw: number | null;
-  consumptionPowerKw: number | null;
-  energyToday?: {
-    consumptionKwh: number;
-    generationKwh: number;
-    importKwhTotal: number;
-    importKwhDay: number;
-    importKwhNight: number;
-    exportKwh: number;
-    solarCoveragePercent: number;
-    estimatedNetCost: number;
-  };
-  apiSignals: Array<{
-    key: string;
-    value: string | number | boolean | null;
-  }>;
-  updatedAt: string;
-  error?: string;
 };
 
 type TuyaDevice = {
@@ -839,6 +783,7 @@ export function useHomeController() {
         batteryStatus: prev?.batteryStatus ?? null,
         batteryDischargePowerKw: prev?.batteryDischargePowerKw ?? null,
         generationPowerKw: prev?.generationPowerKw ?? null,
+        generationDayKwh: prev?.generationDayKwh ?? null,
         consumptionPowerKw: prev?.consumptionPowerKw ?? null,
         energyToday: prev?.energyToday,
         apiSignals: prev?.apiSignals ?? [],

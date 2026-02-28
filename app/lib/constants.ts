@@ -3,6 +3,17 @@
 /** Hard timeout for all outbound HTTP requests to external APIs (Deye, Tuya). */
 export const FETCH_TIMEOUT_MS = 15_000;
 
+// ── Deye ───────────────────────────────────────────────────────────────────────
+
+/** Default Deye OpenAPI base URL used when DEYE_BASE_URL is not set. */
+export const DEYE_BASE_URL_DEFAULT = "https://eu1-developer.deyecloud.com/v1.0";
+
+/** Default timezone for "today" station-history requests. */
+export const DEYE_HISTORY_DAY_TIME_ZONE_DEFAULT = "Europe/Kiev";
+
+/** Cache TTL for computed today generation from /station/history (milliseconds). */
+export const DEYE_HISTORY_GENERATION_CACHE_TTL_MS = 6 * 60 * 1_000;
+
 // ── Tuya ──────────────────────────────────────────────────────────────────────
 
 /** How long a cached Tuya snapshot stays fresh. Also used as the background-refresh interval. */
