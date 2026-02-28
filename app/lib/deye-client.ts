@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { FETCH_TIMEOUT_MS } from "@/app/lib/constants";
+import { useGlobalSlice } from "@/app/lib/global-state";
 
 type DeyeApiResponse = {
   success?: boolean;
@@ -56,7 +58,7 @@ export type DeyeStationSnapshot = {
 };
 
 const DEFAULT_BASE_URL = "https://eu1-developer.deyecloud.com/v1.0";
-const lastKnownGridByStation = new Map<number, boolean>();
+const lastKnownGridByStation = useGlobalSlice<Map<number, boolean>>("deyeGridCache", () => new Map());
 
 function normalizeKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -455,6 +457,7 @@ async function getAccessToken(baseUrl: string, appId: string, appSecret: string)
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   const json = (await resp.json().catch(() => ({}))) as DeyeApiResponse;
@@ -492,6 +495,7 @@ export async function fetchDeyeStationSnapshot(): Promise<DeyeStationSnapshot> {
     },
     body: JSON.stringify({ stationId }),
     cache: "no-store",
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   const latestJson = (await latestResp.json().catch(() => ({}))) as DeyeApiResponse;
   if (!latestResp.ok || latestJson.success === false) {

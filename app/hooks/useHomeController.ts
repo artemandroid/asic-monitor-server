@@ -4,28 +4,25 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { clearAuthState, getAuthState, setAuthState } from "@/app/lib/auth-client";
 import { readUiLang, t, type UiLang, writeUiLang } from "@/app/lib/ui-lang";
-import type {
+import {
   CommandType,
-  MinerState,
-  Notification,
+  MinerControlPhase,
+  type MinerControlState,
+  type MinerState,
+  type Notification,
 } from "@/app/lib/types";
+import {
+  CONTROL_ACTION_LOCK_MS,
+  DEFAULT_DEYE_SYNC_MS,
+  DEFAULT_MINER_SYNC_MS,
+  DEFAULT_TUYA_SYNC_MS,
+  FIXED_TUYA_SYNC_SEC,
+  LOW_HASHRATE_RESTART_GRACE_MS,
+} from "@/app/lib/constants";
 
-const DEFAULT_MINER_SYNC_MS = 60_000;
-const DEFAULT_DEYE_SYNC_MS = 360_000;
-const DEFAULT_TUYA_SYNC_MS = 3_600_000;
-const FIXED_TUYA_SYNC_SEC = 3600;
-const LOW_HASHRATE_RESTART_GRACE_MS = 10 * 60 * 1000;
-const CONTROL_ACTION_LOCK_MS = 10 * 60 * 1000;
 const NOTIFICATION_VISIBLE_COUNT_KEY = "mc_notification_visible_count";
 const BOARD_COUNT_BY_MINER_KEY = "mc_board_count_by_miner";
 const EMPTY_DEVICE_IDS: string[] = [];
-
-type MinerControlPhase = "RESTARTING" | "SLEEPING" | "WAKING" | "WARMING_UP";
-type MinerControlState = {
-  phase: MinerControlPhase;
-  since: number;
-  source?: "RESTART" | "WAKE" | "POWER_ON";
-};
 
 type GeneralSettings = {
   minerSyncIntervalSec: number;
@@ -697,16 +694,16 @@ export function useHomeController() {
         const ready = isHashrateReady(metric);
         const sleeping = isSleepingState(metric);
         const hasPendingServerCommand =
-          miner.pendingCommandType === "RESTART" ||
-          miner.pendingCommandType === "SLEEP" ||
-          miner.pendingCommandType === "WAKE";
+          miner.pendingCommandType === CommandType.RESTART ||
+          miner.pendingCommandType === CommandType.SLEEP ||
+          miner.pendingCommandType === CommandType.WAKE;
 
         if (!hasPendingServerCommand && online && !sleeping) {
           if (
-            current.phase === "RESTARTING" ||
-            current.phase === "WAKING" ||
-            current.phase === "WARMING_UP" ||
-            current.phase === "SLEEPING"
+            current.phase === MinerControlPhase.RESTARTING ||
+            current.phase === MinerControlPhase.WAKING ||
+            current.phase === MinerControlPhase.WARMING_UP ||
+            current.phase === MinerControlPhase.SLEEPING
           ) {
             changed = true;
             continue;
@@ -718,13 +715,13 @@ export function useHomeController() {
           continue;
         }
 
-        if (current.phase === "RESTARTING") {
+        if (current.phase === MinerControlPhase.RESTARTING) {
           if (!online) {
             changed = true;
             continue;
           }
           if (online && !ready) {
-            next[miner.minerId] = { phase: "WARMING_UP", since: current.since, source: current.source };
+            next[miner.minerId] = { phase: MinerControlPhase.WARMING_UP, since: current.since, source: current.source };
             changed = true;
             continue;
           }
@@ -736,13 +733,13 @@ export function useHomeController() {
           continue;
         }
 
-        if (current.phase === "WAKING") {
+        if (current.phase === MinerControlPhase.WAKING) {
           if (!online) {
             changed = true;
             continue;
           }
           if (online && !ready) {
-            next[miner.minerId] = { phase: "WARMING_UP", since: current.since, source: current.source };
+            next[miner.minerId] = { phase: MinerControlPhase.WARMING_UP, since: current.since, source: current.source };
             changed = true;
             continue;
           }
@@ -754,7 +751,7 @@ export function useHomeController() {
           continue;
         }
 
-        if (current.phase === "WARMING_UP") {
+        if (current.phase === MinerControlPhase.WARMING_UP) {
           if (!online) {
             changed = true;
             continue;
@@ -767,7 +764,7 @@ export function useHomeController() {
           continue;
         }
 
-        if (current.phase === "SLEEPING") {
+        if (current.phase === MinerControlPhase.SLEEPING) {
           if (!sleeping) {
             changed = true;
             continue;
@@ -976,7 +973,7 @@ export function useHomeController() {
         setMinerControlStates((prev) => ({
           ...prev,
           [linkedMinerId]: {
-            phase: on ? "WARMING_UP" : "SLEEPING",
+            phase: on ? MinerControlPhase.WARMING_UP : MinerControlPhase.SLEEPING,
             since: Date.now(),
             source: on ? "POWER_ON" : undefined,
           },
@@ -986,7 +983,7 @@ export function useHomeController() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       if (linkedMinerId) {
-        const fallbackType: CommandType = on ? "WAKE" : "SLEEP";
+        const fallbackType: CommandType = on ? CommandType.WAKE : CommandType.SLEEP;
         try {
           const fallbackRes = await fetch("/api/commands/create", {
             method: "POST",
@@ -997,15 +994,15 @@ export function useHomeController() {
             pushClientNotification(
               `Tuya is unavailable. Fallback ${fallbackType} command queued for ${linkedMinerId}.`,
             );
-            if (fallbackType === "SLEEP") {
+            if (fallbackType === CommandType.SLEEP) {
               setMinerControlStates((prev) => ({
                 ...prev,
-                [linkedMinerId]: { phase: "SLEEPING", since: Date.now() },
+                [linkedMinerId]: { phase: MinerControlPhase.SLEEPING, since: Date.now() },
               }));
             } else {
               setMinerControlStates((prev) => ({
                 ...prev,
-                [linkedMinerId]: { phase: "WAKING", since: Date.now(), source: "WAKE" },
+                [linkedMinerId]: { phase: MinerControlPhase.WAKING, since: Date.now(), source: "WAKE" },
               }));
             }
             await fetchMiners();
@@ -1315,14 +1312,14 @@ export function useHomeController() {
         const payload = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error ?? `Failed to create command: ${res.status}`);
       }
-      if (type === "SLEEP") {
+      if (type === CommandType.SLEEP) {
         setMinerControlStates((prev) => ({
           ...prev,
-          [minerId]: { phase: "SLEEPING", since: Date.now() },
+          [minerId]: { phase: MinerControlPhase.SLEEPING, since: Date.now() },
         }));
-      } else if (type === "RESTART" || type === "WAKE") {
+      } else if (type === CommandType.RESTART || type === CommandType.WAKE) {
         const phase: MinerControlPhase =
-          type === "RESTART" ? "RESTARTING" : "WAKING";
+          type === CommandType.RESTART ? MinerControlPhase.RESTARTING : MinerControlPhase.WAKING;
         setMinerControlStates((prev) => ({
           ...prev,
           [minerId]: { phase, since: Date.now(), source: type },
@@ -1371,7 +1368,7 @@ export function useHomeController() {
     }
     setReloadPending(true);
     try {
-      const type: CommandType = "RELOAD_CONFIG";
+      const type: CommandType = CommandType.RELOAD_CONFIG;
       for (const miner of miners) {
         const res = await fetch("/api/commands/create", {
           method: "POST",
@@ -1479,9 +1476,9 @@ export function useHomeController() {
       return { enabled: false, title: "Command already requested" };
     }
     if (
-      miner.pendingCommandType === "RESTART" ||
-      miner.pendingCommandType === "SLEEP" ||
-      miner.pendingCommandType === "WAKE"
+      miner.pendingCommandType === CommandType.RESTART ||
+      miner.pendingCommandType === CommandType.SLEEP ||
+      miner.pendingCommandType === CommandType.WAKE
     ) {
       return { enabled: false, title: t(uiLang, "command_is_already_pending") };
     }
@@ -1710,7 +1707,7 @@ export function useHomeController() {
       if (ok && sleepCmd) {
         setMinerControlStates((prev) => ({
           ...prev,
-          [note.minerId!]: { phase: "SLEEPING", since: createdAtMs },
+          [note.minerId!]: { phase: MinerControlPhase.SLEEPING, since: createdAtMs },
         }));
         continue;
       }
@@ -1718,7 +1715,7 @@ export function useHomeController() {
       if (ok && wakeCmd) {
         setMinerControlStates((prev) => ({
           ...prev,
-          [note.minerId!]: { phase: "WARMING_UP", since: createdAtMs, source: "WAKE" },
+          [note.minerId!]: { phase: MinerControlPhase.WARMING_UP, since: createdAtMs, source: "WAKE" },
         }));
         continue;
       }
@@ -1726,7 +1723,7 @@ export function useHomeController() {
       if (ok && restartCmd) {
         setMinerControlStates((prev) => ({
           ...prev,
-          [note.minerId!]: { phase: "WARMING_UP", since: createdAtMs, source: "RESTART" },
+          [note.minerId!]: { phase: MinerControlPhase.WARMING_UP, since: createdAtMs, source: "RESTART" },
         }));
         continue;
       }

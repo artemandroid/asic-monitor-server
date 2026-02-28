@@ -5,14 +5,17 @@ import { setTuyaSwitch } from "@/app/lib/tuya-client";
 import { getSettings } from "@/app/lib/settings";
 import { saveDeyeEnergySample } from "@/app/lib/deye-energy";
 
-const POWER_AUTOMATION_DEBOUNCE_MS = 45_000;
-const POWER_AUTOMATION_MIN_RUN_INTERVAL_MS = 15_000;
-const DEFAULT_CRITICAL_OFF_BATTERY_PERCENT = 30;
-const DEFAULT_OVERHEAT_SLEEP_MINUTES = 30;
-const GENERATION_COVER_TOLERANCE_KW = 0.2;
-const BATTERY_NOT_DISCHARGING_MAX_KW = 0.05;
-const COMMAND_SLEEP = "SLEEP";
-const COMMAND_WAKE = "WAKE";
+import {
+  BATTERY_NOT_DISCHARGING_MAX_KW,
+  DEFAULT_CRITICAL_OFF_BATTERY_PERCENT,
+  DEFAULT_OVERHEAT_SLEEP_MINUTES,
+  GENERATION_COVER_TOLERANCE_KW,
+  POWER_AUTOMATION_DEBOUNCE_MS,
+  POWER_AUTOMATION_MIN_RUN_INTERVAL_MS,
+} from "@/app/lib/constants";
+import { CommandStatus, CommandType } from "@/app/lib/types";
+import { useGlobalSlice } from "@/app/lib/global-state";
+
 const NOTIFY_POWER_AUTOMATION = "POWER_AUTOMATION";
 const NOTIFY_OVERHEAT_WAKE_DEFERRED = "OVERHEAT_WAKE_DEFERRED";
 const NOTIFY_OVERHEAT_WAKE_SENT = "OVERHEAT_WAKE_SENT";
@@ -39,22 +42,15 @@ type AutomationState = {
   autoOffRequestedByMiner: Record<string, boolean>;
 };
 
-const globalState = globalThis as unknown as { __powerAutomationState?: AutomationState };
-
-const state: AutomationState =
-  globalState.__powerAutomationState ?? {
-    running: false,
-    lastRunAt: 0,
-    prevGridOnline: null,
-    lockByKey: {},
-    thresholdAutoOffAtByMiner: {},
-    overheatWakePendingByMiner: {},
-    autoOffRequestedByMiner: {},
-  };
-
-if (!globalState.__powerAutomationState) {
-  globalState.__powerAutomationState = state;
-}
+const state = useGlobalSlice<AutomationState>("powerAutomation", () => ({
+  running: false,
+  lastRunAt: 0,
+  prevGridOnline: null,
+  lockByKey: {},
+  thresholdAutoOffAtByMiner: {},
+  overheatWakePendingByMiner: {},
+  autoOffRequestedByMiner: {},
+}));
 
 function shouldSkipRun(nowMs: number): boolean {
   if (state.running) return true;
@@ -84,10 +80,10 @@ async function clearOverheatLock(minerId: string) {
   });
 }
 
-async function enqueueMinerCommand(minerId: string, type: typeof COMMAND_SLEEP | typeof COMMAND_WAKE) {
+async function enqueueMinerCommand(minerId: string, type: CommandType.SLEEP | CommandType.WAKE) {
   if (!prisma) return false;
   const pending = await prisma.command.findFirst({
-    where: { minerId, type, status: "PENDING" },
+    where: { minerId, type, status: CommandStatus.PENDING },
     select: { id: true },
   });
   if (pending) return false;
@@ -97,11 +93,11 @@ async function enqueueMinerCommand(minerId: string, type: typeof COMMAND_SLEEP |
       id: crypto.randomUUID(),
       minerId,
       type,
-      status: "PENDING",
+      status: CommandStatus.PENDING,
       createdAt: new Date(),
     },
   });
-  if (type === COMMAND_WAKE) {
+  if (type === CommandType.WAKE) {
     await prisma.miner.updateMany({
       where: { id: minerId },
       data: { lastRestartAt: new Date() },
@@ -296,7 +292,7 @@ export async function runPowerAutomation(): Promise<void> {
             continue;
           }
 
-          const queuedWake = await enqueueMinerCommand(miner.id, COMMAND_WAKE);
+          const queuedWake = await enqueueMinerCommand(miner.id, CommandType.WAKE);
           await clearOverheatLock(miner.id);
           const hadDeferredWake = state.overheatWakePendingByMiner[miner.id] === true;
           delete state.overheatWakePendingByMiner[miner.id];
@@ -324,7 +320,7 @@ export async function runPowerAutomation(): Promise<void> {
         const lockedUntil = state.lockByKey[lockKey] ?? 0;
         if (now >= lockedUntil && !isSleepingLike) {
           state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
-          const queued = await enqueueMinerCommand(miner.id, COMMAND_SLEEP);
+          const queued = await enqueueMinerCommand(miner.id, CommandType.SLEEP);
           if (queued) {
             await notify(
               `Tuya unavailable for ${miner.id}; fallback SLEEP command queued.`,
@@ -368,7 +364,7 @@ export async function runPowerAutomation(): Promise<void> {
         const lockedUntil = state.lockByKey[lockKey] ?? 0;
         if (now >= lockedUntil && isSleepingLike && !overheatLocked) {
           state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
-          const queued = await enqueueMinerCommand(miner.id, COMMAND_WAKE);
+          const queued = await enqueueMinerCommand(miner.id, CommandType.WAKE);
           if (queued) {
             await notify(
               `Tuya unavailable for ${miner.id}; fallback WAKE command queued.`,

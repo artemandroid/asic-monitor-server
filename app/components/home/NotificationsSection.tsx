@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Alert, Box, Button, Collapse, Paper, Stack, Typography } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material/styles";
-import type { CommandType, Notification } from "@/app/lib/types";
+import { CommandType, type Notification } from "@/app/lib/types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
 type GroupedNotification = Notification & { count?: number };
@@ -39,7 +39,7 @@ export function NotificationsSection({
   horizontalCollapse = false,
 }: NotificationsSectionProps) {
   const isRestartNotification = (note: Notification) =>
-    note.action === "RESTART" || /restart|рестарт|перезапуск|перезавантаж/i.test(note.message);
+    note.action === CommandType.RESTART || /restart|рестарт|перезапуск|перезавантаж/i.test(note.message);
   const isOffNotification = (note: Notification) =>
     /auto off|power off|turned off|switch off|вимк|відключ|отключ|знеструм|sleep/i.test(note.message);
   const getSeverity = (note: Notification): "error" | "info" | "success" => {
@@ -123,7 +123,7 @@ export function NotificationsSection({
                 {localizeNotificationMessage(note)}
               </Typography>
 
-              {note.action === "RESTART" && note.minerId && (() => {
+              {note.action === CommandType.RESTART && note.minerId && (() => {
                 const restartAction = restartActionStateForNote(note);
                 return (
                   <Box sx={{ mt: 0.9 }}>
@@ -134,7 +134,7 @@ export function NotificationsSection({
                       disabled={!restartAction.enabled}
                       sx={restartButtonSx}
                       title={restartAction.title}
-                      onClick={() => onRequestMinerCommandConfirm(note.minerId!, "RESTART")}
+                      onClick={() => onRequestMinerCommandConfirm(note.minerId!, CommandType.RESTART)}
                     >
                       {t(uiLang, "restart_now")}
                     </Button>

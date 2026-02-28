@@ -1,4 +1,5 @@
-import type { Command, MinerState, Notification, Settings } from "./types";
+import type { Command, MinerState, Notification, ReadStatus, Settings } from "./types";
+import { useGlobalSlice } from "./global-state";
 
 type Store = {
   minerStates: Map<
@@ -28,7 +29,7 @@ type Store = {
       overheatLockedAt?: string | null;
       overheatLastTempC?: number | null;
       online?: boolean | null;
-      readStatus?: string | null;
+      readStatus?: ReadStatus | null;
       error?: string | null;
       lastOnlineAt?: string | null;
       lastRestartAt?: string | null;
@@ -40,32 +41,25 @@ type Store = {
   settings: Settings;
 };
 
-const globalStore = globalThis as unknown as { __minerStore?: Store };
-
-const store: Store =
-  globalStore.__minerStore ?? {
-    minerStates: new Map(),
-    commands: [],
-    notifications: [],
-    settings: {
-      autoRestartEnabled: true,
-      minerSyncIntervalSec: 60,
-      deyeSyncIntervalSec: 360,
-      tuyaSyncIntervalSec: 3600,
-      restartDelayMinutes: 10,
-      postRestartGraceMinutes: 10,
-      lowHashrateThresholdGh: 10,
-      hashrateDeviationPercent: 10,
-      notifyAutoRestart: true,
-      notifyRestartPrompt: true,
-      notificationVisibleCount: 2,
-      criticalBatteryOffPercent: 30,
-    },
-  };
-
-if (!globalStore.__minerStore) {
-  globalStore.__minerStore = store;
-}
+const store = useGlobalSlice<Store>("minerStore", () => ({
+  minerStates: new Map(),
+  commands: [],
+  notifications: [],
+  settings: {
+    autoRestartEnabled: true,
+    minerSyncIntervalSec: 60,
+    deyeSyncIntervalSec: 360,
+    tuyaSyncIntervalSec: 3600,
+    restartDelayMinutes: 10,
+    postRestartGraceMinutes: 10,
+    lowHashrateThresholdGh: 10,
+    hashrateDeviationPercent: 10,
+    notifyAutoRestart: true,
+    notifyRestartPrompt: true,
+    notificationVisibleCount: 2,
+    criticalBatteryOffPercent: 30,
+  },
+}));
 
 export const minerStates = store.minerStates;
 export const commands = store.commands;

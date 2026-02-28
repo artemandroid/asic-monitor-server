@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import type { CommandStatus } from "@/app/lib/types";
+import { CommandStatus } from "@/app/lib/types";
 import { prisma } from "@/app/lib/prisma";
 import { commands, notifications } from "@/app/lib/store";
 
@@ -10,7 +10,7 @@ type ResultBody = {
   error?: string;
 };
 
-const allowedStatuses: CommandStatus[] = ["DONE", "FAILED"];
+const allowedStatuses: CommandStatus[] = [CommandStatus.DONE, CommandStatus.FAILED];
 
 export async function POST(request: NextRequest) {
   let body: ResultBody;
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     });
 
     const message =
-      body.status === "DONE"
+      body.status === CommandStatus.DONE
         ? `Command ${command.type} succeeded on ${command.minerId}.`
         : `Command ${command.type} failed on ${command.minerId}${body.error ? `: ${body.error}` : "."}`;
     await prisma.notification.create({
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       error: body.error,
     };
     const message =
-      body.status === "DONE"
+      body.status === CommandStatus.DONE
         ? `Command ${command.type} succeeded on ${command.minerId}.`
         : `Command ${command.type} failed on ${command.minerId}${body.error ? `: ${body.error}` : "."}`;
     notifications.unshift({

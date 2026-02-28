@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import type { MinerMetric } from "@/app/lib/types";
+import { CommandStatus, CommandType, type MinerMetric } from "@/app/lib/types";
 import { requireAgentAuth } from "@/app/lib/auth";
 import { prisma } from "@/app/lib/prisma";
 import { getSettings } from "@/app/lib/settings";
@@ -8,13 +8,13 @@ import { runPowerAutomation } from "@/app/lib/power-automation";
 import { ensureTuyaBackgroundRefresh } from "@/app/lib/tuya-background-refresh";
 import { commands, minerStates, notifications } from "@/app/lib/store";
 
+import { BOARD_HASHRATE_DRIFT_NOTIFY_COOLDOWN_MS, BOARD_HASHRATE_DRIFT_PERCENT } from "@/app/lib/constants";
+
 const NOTIFY_AUTO_RESTART = "AUTO_RESTART";
 const NOTIFY_RESTART_PROMPT = "LOW_HASHRATE_PROMPT";
 const NOTIFY_OVERHEAT_COOLDOWN = "OVERHEAT_COOLDOWN";
 const NOTIFY_BOARD_HASHRATE_DRIFT = "BOARD_HASHRATE_DRIFT";
 const AUTO_RESTART_TEMP_DISABLED = false;
-const BOARD_HASHRATE_DRIFT_PERCENT = 10;
-const BOARD_HASHRATE_DRIFT_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000;
 
 function toGh(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -84,6 +84,67 @@ function formatBoardDriftMessage(minerId: string, drifts: BoardDrift[]): string 
   return `Board hashrate drift on ${minerId}: ${summary}.`;
 }
 
+type NormalizedMinerConfig = {
+  lowHashrateThresholdGh: number;
+  postRestartGraceMinutes: number;
+  overheatProtectionEnabled: boolean;
+  overheatShutdownTempC: number;
+  overheatSleepMinutes: number;
+  overheatLocked: boolean;
+  lastRestartAt: Date | null;
+  lastLowHashrateAt: Date | null;
+};
+
+type MetricDecisions = {
+  hashrateGh: number | null;
+  maxTempC: number | null;
+  boardDrifts: BoardDrift[];
+  overheatThreshold: number;
+  overheatSleepMinutes: number;
+  overheatTriggered: boolean;
+  wasOverheatLocked: boolean;
+  isOverheatLocked: boolean;
+  isLowHashrate: boolean;
+  restartReady: boolean;
+  promptReady: boolean;
+  boardDriftReady: boolean;
+};
+
+function computeDecisions(
+  body: MinerMetric,
+  isOnline: boolean | null,
+  config: NormalizedMinerConfig,
+  settings: { restartDelayMinutes: number },
+  now: Date,
+): MetricDecisions {
+  const hashrateGh = resolveControlHashrateGh(body);
+  const maxTempC = resolveMaxTempC(body);
+  const boardDrifts = resolveBoardHashrateDrifts(body);
+  const thresholdGh = Math.max(config.lowHashrateThresholdGh, 0);
+  const promptCooldownMs = Math.max(settings.restartDelayMinutes, 0) * 60 * 1_000;
+  const postRestartGraceMs = Math.max(config.postRestartGraceMinutes, 0) * 60 * 1_000;
+  const overheatThreshold = config.overheatShutdownTempC;
+  const overheatSleepMinutes = Math.max(5, Math.floor(config.overheatSleepMinutes));
+  const overheatTriggered =
+    config.overheatProtectionEnabled &&
+    typeof maxTempC === "number" &&
+    maxTempC >= overheatThreshold;
+  const wasOverheatLocked = config.overheatLocked;
+  const isOverheatLocked = wasOverheatLocked || overheatTriggered;
+  const isLowHashrate =
+    isOnline === true && typeof hashrateGh === "number" && hashrateGh < thresholdGh;
+  const nowMs = now.getTime();
+  const restartReady =
+    !config.lastRestartAt || nowMs - config.lastRestartAt.getTime() >= postRestartGraceMs;
+  const promptReady =
+    !config.lastLowHashrateAt || nowMs - config.lastLowHashrateAt.getTime() >= promptCooldownMs;
+  return {
+    hashrateGh, maxTempC, boardDrifts, overheatThreshold, overheatSleepMinutes,
+    overheatTriggered, wasOverheatLocked, isOverheatLocked,
+    isLowHashrate, restartReady, promptReady, boardDriftReady: restartReady,
+  };
+}
+
 export async function POST(request: NextRequest) {
   const auth = requireAgentAuth(request);
   if (auth) return auth;
@@ -145,22 +206,19 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    const hashrateGh = resolveControlHashrateGh(body);
-    const maxTempC = resolveMaxTempC(body);
-    const boardDrifts = resolveBoardHashrateDrifts(body);
-    const thresholdGh = Math.max(upserted.lowHashrateThresholdGh ?? 10, 0);
-    const promptCooldownMs = Math.max(settings.restartDelayMinutes, 0) * 60 * 1000;
-    const postRestartGraceMs =
-      Math.max(upserted.postRestartGraceMinutes ?? 10, 0) * 60 * 1000;
-
-    const overheatThreshold = upserted.overheatShutdownTempC ?? 83;
-    const overheatSleepMinutes = Math.max(5, Math.floor(upserted.overheatSleepMinutes ?? 30));
-    const overheatTriggered =
-      upserted.overheatProtectionEnabled === true &&
-      typeof maxTempC === "number" &&
-      maxTempC >= overheatThreshold;
-    const wasOverheatLocked = upserted.overheatLocked === true;
-    const isOverheatLocked = wasOverheatLocked || overheatTriggered;
+    const { hashrateGh, maxTempC, boardDrifts, overheatThreshold, overheatSleepMinutes,
+      overheatTriggered, wasOverheatLocked, isOverheatLocked,
+      isLowHashrate, restartReady, promptReady, boardDriftReady } =
+      computeDecisions(body, isOnline, {
+        lowHashrateThresholdGh: upserted.lowHashrateThresholdGh ?? 10,
+        postRestartGraceMinutes: upserted.postRestartGraceMinutes ?? 10,
+        overheatProtectionEnabled: upserted.overheatProtectionEnabled === true,
+        overheatShutdownTempC: upserted.overheatShutdownTempC ?? 83,
+        overheatSleepMinutes: upserted.overheatSleepMinutes ?? 30,
+        overheatLocked: upserted.overheatLocked === true,
+        lastRestartAt: upserted.lastRestartAt ?? null,
+        lastLowHashrateAt: upserted.lastLowHashrateAt ?? null,
+      }, settings, now);
     if (isOverheatLocked !== wasOverheatLocked || typeof maxTempC === "number") {
       await prisma.miner.update({
         where: { id: minerId },
@@ -174,15 +232,15 @@ export async function POST(request: NextRequest) {
     }
     if (overheatTriggered && !wasOverheatLocked) {
       const pendingSleep = await prisma.command.findFirst({
-        where: { minerId, type: "SLEEP", status: "PENDING" },
+        where: { minerId, type: CommandType.SLEEP, status: CommandStatus.PENDING },
       });
       if (!pendingSleep) {
         await prisma.command.create({
           data: {
             id: crypto.randomUUID(),
             minerId,
-            type: "SLEEP",
-            status: "PENDING",
+            type: CommandType.SLEEP,
+            status: CommandStatus.PENDING,
             createdAt: now,
           },
         });
@@ -201,28 +259,19 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const isLowHashrate =
-      isOnline === true &&
-      typeof hashrateGh === "number" &&
-      hashrateGh < thresholdGh;
-
     if (isLowHashrate && !isOverheatLocked) {
-      const restartAnchor = upserted.lastRestartAt ?? null;
-      const ready =
-        !restartAnchor || now.getTime() - restartAnchor.getTime() >= postRestartGraceMs;
-
       if (upserted.autoRestartEnabled && !AUTO_RESTART_TEMP_DISABLED) {
-        if (ready) {
+        if (restartReady) {
           const pendingRestart = await prisma.command.findFirst({
-            where: { minerId, type: "RESTART", status: "PENDING" },
+            where: { minerId, type: CommandType.RESTART, status: CommandStatus.PENDING },
           });
           if (!pendingRestart) {
             await prisma.command.create({
               data: {
                 id: crypto.randomUUID(),
                 minerId,
-                type: "RESTART",
-                status: "PENDING",
+                type: CommandType.RESTART,
+                status: CommandStatus.PENDING,
                 createdAt: now,
               },
             });
@@ -244,15 +293,12 @@ export async function POST(request: NextRequest) {
           }
         }
       } else if (!upserted.autoRestartEnabled && settings.notifyRestartPrompt) {
-        const lastPromptAt = upserted.lastLowHashrateAt;
-        const promptReady =
-          !lastPromptAt || now.getTime() - lastPromptAt.getTime() >= promptCooldownMs;
         if (promptReady) {
           await prisma.notification.create({
             data: {
               type: NOTIFY_RESTART_PROMPT,
               minerId,
-              action: "RESTART",
+              action: CommandType.RESTART,
               message: `Hashrate on ${minerId} dropped to ${hashrateGh?.toFixed(2)} GH/s. Auto-restart is disabled. Restart now?`,
             },
           });
@@ -265,10 +311,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (isOnline === true && boardDrifts.length > 0) {
-      const restartAnchor = upserted.lastRestartAt ?? null;
-      const ready =
-        !restartAnchor || now.getTime() - restartAnchor.getTime() >= postRestartGraceMs;
-      if (ready) {
+      if (boardDriftReady) {
         const recentBoardDrift = await prisma.notification.findFirst({
           where: { minerId, type: NOTIFY_BOARD_HASHRATE_DRIFT },
           orderBy: { createdAt: "desc" },
@@ -281,7 +324,7 @@ export async function POST(request: NextRequest) {
             data: {
               type: NOTIFY_BOARD_HASHRATE_DRIFT,
               minerId,
-              action: "RESTART",
+              action: CommandType.RESTART,
               message: formatBoardDriftMessage(minerId, boardDrifts),
             },
           });
@@ -335,21 +378,19 @@ export async function POST(request: NextRequest) {
       lastLowHashrateAt: existing?.lastLowHashrateAt ?? null,
     });
 
-    const hashrateGh = resolveControlHashrateGh(body);
-    const maxTempC = resolveMaxTempC(body);
-    const boardDrifts = resolveBoardHashrateDrifts(body);
-    const thresholdGh = Math.max(existing?.lowHashrateThresholdGh ?? 10, 0);
-    const promptCooldownMs = Math.max(settings.restartDelayMinutes, 0) * 60 * 1000;
-    const postRestartGraceMs =
-      Math.max(existing?.postRestartGraceMinutes ?? 10, 0) * 60 * 1000;
-    const overheatThreshold = existing?.overheatShutdownTempC ?? 83;
-    const overheatSleepMinutes = Math.max(5, Math.floor(existing?.overheatSleepMinutes ?? 30));
-    const overheatTriggered =
-      (existing?.overheatProtectionEnabled ?? true) &&
-      typeof maxTempC === "number" &&
-      maxTempC >= overheatThreshold;
-    const wasOverheatLocked = existing?.overheatLocked ?? false;
-    const isOverheatLocked = wasOverheatLocked || overheatTriggered;
+    const { hashrateGh, maxTempC, boardDrifts, overheatThreshold, overheatSleepMinutes,
+      overheatTriggered, wasOverheatLocked, isOverheatLocked,
+      isLowHashrate, restartReady, promptReady, boardDriftReady } =
+      computeDecisions(body, isOnline, {
+        lowHashrateThresholdGh: existing?.lowHashrateThresholdGh ?? 10,
+        postRestartGraceMinutes: existing?.postRestartGraceMinutes ?? 10,
+        overheatProtectionEnabled: existing?.overheatProtectionEnabled ?? true,
+        overheatShutdownTempC: existing?.overheatShutdownTempC ?? 83,
+        overheatSleepMinutes: existing?.overheatSleepMinutes ?? 30,
+        overheatLocked: existing?.overheatLocked ?? false,
+        lastRestartAt: existing?.lastRestartAt ? new Date(existing.lastRestartAt) : null,
+        lastLowHashrateAt: existing?.lastLowHashrateAt ? new Date(existing.lastLowHashrateAt) : null,
+      }, settings, now);
     const minerAfterUpsert = minerStates.get(minerId);
     if (minerAfterUpsert) {
       minerAfterUpsert.overheatLocked = isOverheatLocked;
@@ -363,14 +404,14 @@ export async function POST(request: NextRequest) {
     }
     if (overheatTriggered && !wasOverheatLocked) {
       const hasPendingSleep = commands.some(
-        (c) => c.minerId === minerId && c.type === "SLEEP" && c.status === "PENDING",
+        (c) => c.minerId === minerId && c.type === CommandType.SLEEP && c.status === CommandStatus.PENDING,
       );
       if (!hasPendingSleep) {
         commands.push({
           id: crypto.randomUUID(),
           minerId,
-          type: "SLEEP",
-          status: "PENDING",
+          type: CommandType.SLEEP,
+          status: CommandStatus.PENDING,
           createdAt: nowIso,
         });
       }
@@ -386,26 +427,17 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const isLowHashrate =
-      isOnline === true &&
-      typeof hashrateGh === "number" &&
-      hashrateGh < thresholdGh;
-
     if (isLowHashrate && !isOverheatLocked) {
-      const anchorIso = existing?.lastRestartAt ?? null;
-      const anchor = anchorIso ? new Date(anchorIso) : null;
-      const ready = !anchor || now.getTime() - anchor.getTime() >= postRestartGraceMs;
-
-      if ((existing?.autoRestartEnabled ?? false) && !AUTO_RESTART_TEMP_DISABLED && ready) {
+      if ((existing?.autoRestartEnabled ?? false) && !AUTO_RESTART_TEMP_DISABLED && restartReady) {
         const hasPending = commands.some(
-          (c) => c.minerId === minerId && c.type === "RESTART" && c.status === "PENDING",
+          (c) => c.minerId === minerId && c.type === CommandType.RESTART && c.status === CommandStatus.PENDING,
         );
         if (!hasPending) {
           commands.push({
             id: crypto.randomUUID(),
             minerId,
-            type: "RESTART",
-            status: "PENDING",
+            type: CommandType.RESTART,
+            status: CommandStatus.PENDING,
             createdAt: nowIso,
           });
           const miner = minerStates.get(minerId);
@@ -420,12 +452,7 @@ export async function POST(request: NextRequest) {
             });
           }
         }
-      } else if (!(existing?.autoRestartEnabled ?? false) && settings.notifyRestartPrompt && ready) {
-        const lastPromptAt = existing?.lastLowHashrateAt
-          ? new Date(existing.lastLowHashrateAt)
-          : null;
-        const promptReady =
-          !lastPromptAt || now.getTime() - lastPromptAt.getTime() >= promptCooldownMs;
+      } else if (!(existing?.autoRestartEnabled ?? false) && settings.notifyRestartPrompt && restartReady) {
         if (!promptReady) {
           if (notifications.length > 100) {
             notifications.length = 100;
@@ -437,7 +464,7 @@ export async function POST(request: NextRequest) {
           type: NOTIFY_RESTART_PROMPT,
           message: `Hashrate on ${minerId} dropped to ${hashrateGh?.toFixed(2)} GH/s. Auto-restart is disabled. Restart now?`,
           minerId,
-          action: "RESTART",
+          action: CommandType.RESTART,
           createdAt: nowIso,
         });
         const miner = minerStates.get(minerId);
@@ -446,10 +473,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (isOnline === true && boardDrifts.length > 0) {
-      const anchorIso = existing?.lastRestartAt ?? null;
-      const anchor = anchorIso ? new Date(anchorIso) : null;
-      const ready = !anchor || now.getTime() - anchor.getTime() >= postRestartGraceMs;
-      if (ready) {
+      if (boardDriftReady) {
         const recentBoardDrift = notifications.find(
           (n) => n.minerId === minerId && n.type === NOTIFY_BOARD_HASHRATE_DRIFT,
         );
@@ -462,7 +486,7 @@ export async function POST(request: NextRequest) {
             type: NOTIFY_BOARD_HASHRATE_DRIFT,
             message: formatBoardDriftMessage(minerId, boardDrifts),
             minerId,
-            action: "RESTART",
+            action: CommandType.RESTART,
             createdAt: nowIso,
           });
         }

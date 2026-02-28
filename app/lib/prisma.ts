@@ -7,7 +7,8 @@ const require = createRequire(import.meta.url);
 
 type PrismaLike = PrismaClientType;
 
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaLike | null };
+// Global cache holds a non-null value after first initialisation.
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaLike };
 
 function createPrismaClient(): PrismaLike | null {
   try {
@@ -32,7 +33,19 @@ function createPrismaClient(): PrismaLike | null {
   }
 }
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+// When the DB is not configured, return a Proxy that throws on every access.
+// Routes catch these errors via their existing try/catch and fall back to the
+// in-memory store — the same behaviour as the previous explicit null check.
+function createUnavailablePrisma(): PrismaLike {
+  return new Proxy(Object.create(null) as object, {
+    get(_: object, prop: string | symbol): unknown {
+      throw new Error(`Database not available (prisma.${String(prop)})`);
+    },
+  }) as unknown as PrismaLike;
+}
+
+export const prisma: PrismaLike =
+  globalForPrisma.prisma ?? createPrismaClient() ?? createUnavailablePrisma();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;

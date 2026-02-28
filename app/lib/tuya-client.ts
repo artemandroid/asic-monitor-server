@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
+import { FETCH_TIMEOUT_MS } from "@/app/lib/constants";
 
 type TuyaApiResponse<T> = {
   success?: boolean;
@@ -109,6 +110,7 @@ async function tuyaRequest<T>({
       headers,
       body: method === "POST" ? bodyText : undefined,
       cache: "no-store",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     const detail =

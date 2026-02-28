@@ -23,10 +23,11 @@ export type MinerMetric = {
   ip?: string;
   asicType?: string;
   firmware?: string;
+  firmwareFamily?: string;
   authType?: string;
   expectedHashrate?: number;
   online?: boolean;
-  readStatus?: "OK" | "FAILED" | "DUMMY" | "OFFLINE";
+  readStatus?: ReadStatus;
   error?: string;
 };
 
@@ -57,8 +58,25 @@ export type MinerState = {
   lastMetric: MinerMetric | null;
 };
 
-export type CommandType = "RESTART" | "SLEEP" | "WAKE" | "RELOAD_CONFIG";
-export type CommandStatus = "PENDING" | "DONE" | "FAILED";
+export enum CommandType {
+  RESTART = "RESTART",
+  SLEEP = "SLEEP",
+  WAKE = "WAKE",
+  RELOAD_CONFIG = "RELOAD_CONFIG",
+}
+
+export enum CommandStatus {
+  PENDING = "PENDING",
+  DONE = "DONE",
+  FAILED = "FAILED",
+}
+
+export enum ReadStatus {
+  OK = "OK",
+  FAILED = "FAILED",
+  DUMMY = "DUMMY",
+  OFFLINE = "OFFLINE",
+}
 
 export type Command = {
   id: string;
@@ -92,4 +110,17 @@ export type Notification = {
   minerId?: string;
   action?: string;
   createdAt: string;
+};
+
+export enum MinerControlPhase {
+  RESTARTING = "RESTARTING",
+  SLEEPING = "SLEEPING",
+  WAKING = "WAKING",
+  WARMING_UP = "WARMING_UP",
+}
+
+export type MinerControlState = {
+  phase: MinerControlPhase;
+  since: number;
+  source?: "RESTART" | "WAKE" | "POWER_ON";
 };

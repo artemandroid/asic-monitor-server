@@ -1,5 +1,5 @@
 import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Typography } from "@mui/material";
-import type { CommandType } from "@/app/lib/types";
+import { CommandType } from "@/app/lib/types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
 type TuyaDevice = {
@@ -36,11 +36,11 @@ export function ConfirmActionModal({
         <Typography variant="body1">
           {pendingConfirmAction.kind === "MINER_COMMAND" ? (
             <>
-              {pendingConfirmAction.command === "RESTART" &&
+              {pendingConfirmAction.command === CommandType.RESTART &&
                 t(uiLang, "confirm_restart_miner", { minerId: pendingConfirmAction.minerId })}
-              {pendingConfirmAction.command === "SLEEP" &&
+              {pendingConfirmAction.command === CommandType.SLEEP &&
                 t(uiLang, "confirm_sleep_miner", { minerId: pendingConfirmAction.minerId })}
-              {pendingConfirmAction.command === "WAKE" &&
+              {pendingConfirmAction.command === CommandType.WAKE &&
                 t(uiLang, "confirm_wake_miner", { minerId: pendingConfirmAction.minerId })}
             </>
           ) : (

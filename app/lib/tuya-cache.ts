@@ -1,7 +1,9 @@
 import { prisma } from "@/app/lib/prisma";
 import { fetchTuyaDevices, type TuyaSnapshot } from "@/app/lib/tuya-client";
+import { TUYA_CACHE_MAX_AGE_MS } from "@/app/lib/constants";
+import { useGlobalSlice } from "@/app/lib/global-state";
 
-export const TUYA_CACHE_MAX_AGE_MS = 60 * 60 * 1000;
+export { TUYA_CACHE_MAX_AGE_MS };
 
 type TuyaCacheRecord = {
   snapshot: TuyaSnapshot;
@@ -15,7 +17,8 @@ type TuyaCacheResult = {
   error?: string;
 };
 
-const globalTuyaCache = globalThis as unknown as { __tuyaSnapshotCache?: TuyaCacheRecord };
+type TuyaCacheSlice = { record: TuyaCacheRecord | null };
+const tuyaCacheSlice = useGlobalSlice<TuyaCacheSlice>("tuyaCache", () => ({ record: null }));
 
 function isTuyaSnapshot(value: unknown): value is TuyaSnapshot {
   if (!value || typeof value !== "object") return false;
@@ -48,11 +51,11 @@ async function writeDbCache(snapshot: TuyaSnapshot, fetchedAt: Date): Promise<vo
 }
 
 function getMemoryCache(): TuyaCacheRecord | null {
-  return globalTuyaCache.__tuyaSnapshotCache ?? null;
+  return tuyaCacheSlice.record;
 }
 
 function setMemoryCache(snapshot: TuyaSnapshot, fetchedAt: Date): void {
-  globalTuyaCache.__tuyaSnapshotCache = { snapshot, fetchedAt };
+  tuyaCacheSlice.record = { snapshot, fetchedAt };
 }
 
 function isFresh(record: TuyaCacheRecord, maxAgeMs: number): boolean {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import type { Command, CommandType } from "@/app/lib/types";
+import { Command, CommandStatus, CommandType } from "@/app/lib/types";
 import { prisma } from "@/app/lib/prisma";
 import { commands, minerStates } from "@/app/lib/store";
 import { canAccessMiner } from "@/app/lib/access-config";
@@ -11,7 +11,7 @@ type CreateBody = {
   type?: CommandType;
 };
 
-const allowedTypes: CommandType[] = ["RESTART", "SLEEP", "WAKE", "RELOAD_CONFIG"];
+const allowedTypes = Object.values(CommandType);
 
 export async function POST(request: NextRequest) {
   const auth = requireWebAuth(request);
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     id: crypto.randomUUID(),
     minerId: body.minerId,
     type: body.type,
-    status: "PENDING",
+    status: CommandStatus.PENDING,
     createdAt: new Date().toISOString(),
   };
   try {
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
       where: { id: command.minerId },
       select: { overheatLocked: true },
     });
-    if (miner?.overheatLocked && (command.type === "RESTART" || command.type === "WAKE")) {
+    if (miner?.overheatLocked && (command.type === CommandType.RESTART || command.type === CommandType.WAKE)) {
       return NextResponse.json(
         { error: "Overheat lock is active. Unlock control first." },
         { status: 409 },
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    if (command.type === "RESTART" || command.type === "WAKE") {
+    if (command.type === CommandType.RESTART || command.type === CommandType.WAKE) {
       await prisma.miner.updateMany({
         where: { id: command.minerId },
         data: { lastRestartAt: new Date() },
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     }
   } catch {
     const miner = minerStates.get(command.minerId);
-    if (miner?.overheatLocked && (command.type === "RESTART" || command.type === "WAKE")) {
+    if (miner?.overheatLocked && (command.type === CommandType.RESTART || command.type === CommandType.WAKE)) {
       return NextResponse.json(
         { error: "Overheat lock is active. Unlock control first." },
         { status: 409 },
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
     }
 
     commands.push(command);
-    if (command.type === "RESTART" || command.type === "WAKE") {
+    if (command.type === CommandType.RESTART || command.type === CommandType.WAKE) {
       const miner = minerStates.get(command.minerId);
       if (miner) {
         miner.lastRestartAt = new Date().toISOString();

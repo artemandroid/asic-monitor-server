@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { requireAgentAuth } from "@/app/lib/auth";
+import { CommandStatus } from "@/app/lib/types";
 import { prisma } from "@/app/lib/prisma";
 import { commands } from "@/app/lib/store";
 
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
     | undefined;
   try {
     const dbCommand = await prisma.command.findFirst({
-      where: { minerId, status: "PENDING" },
+      where: { minerId, status: CommandStatus.PENDING },
       orderBy: { createdAt: "asc" },
     });
     if (dbCommand) {
@@ -42,7 +43,7 @@ export async function GET(request: NextRequest) {
     }
   } catch {
     const memCommand = commands
-      .filter((c) => c.minerId === minerId && c.status === "PENDING")
+      .filter((c) => c.minerId === minerId && c.status === CommandStatus.PENDING)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
     if (memCommand) {
       command = {

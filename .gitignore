@@ -45,3 +45,5 @@ next-env.d.ts
 # Local Prisma sqlite database
 prisma/dev.db
 prisma/*.db-journal
+*.db
+.claude

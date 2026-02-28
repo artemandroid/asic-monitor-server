@@ -1,25 +1,16 @@
 import { getTuyaSnapshotCached } from "@/app/lib/tuya-cache";
-
-const TUYA_BACKGROUND_REFRESH_MS = 60 * 60 * 1000;
+import { TUYA_BACKGROUND_REFRESH_MS } from "@/app/lib/constants";
+import { useGlobalSlice } from "@/app/lib/global-state";
 
 type TuyaBackgroundRefreshState = {
   timer: NodeJS.Timeout | null;
   running: boolean;
 };
 
-const globalState = globalThis as unknown as {
-  __tuyaBackgroundRefreshState?: TuyaBackgroundRefreshState;
-};
-
-const state: TuyaBackgroundRefreshState =
-  globalState.__tuyaBackgroundRefreshState ?? {
-    timer: null,
-    running: false,
-  };
-
-if (!globalState.__tuyaBackgroundRefreshState) {
-  globalState.__tuyaBackgroundRefreshState = state;
-}
+const state = useGlobalSlice<TuyaBackgroundRefreshState>("tuyaBackgroundRefresh", () => ({
+  timer: null,
+  running: false,
+}));
 
 async function refreshSnapshotNow(): Promise<void> {
   if (state.running) return;

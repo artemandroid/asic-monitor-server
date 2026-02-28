@@ -24,48 +24,16 @@ import {
   Typography,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
-import type { CommandType, MinerState } from "@/app/lib/types";
+import {
+  CommandType,
+  MinerControlPhase,
+  ReadStatus,
+  type MinerControlState,
+  type MinerMetric,
+  type MinerState,
+} from "@/app/lib/types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 import { ButtonSpinnerIcon } from "@/app/components/icons";
-
-type MinerControlPhase = "RESTARTING" | "SLEEPING" | "WAKING" | "WARMING_UP";
-
-type MinerControlState = {
-  phase: MinerControlPhase;
-  since: number;
-  source?: "RESTART" | "WAKE" | "POWER_ON";
-};
-
-type MinerMetric = {
-  online?: boolean;
-  ip?: string;
-  asicType?: string;
-  firmware?: string;
-  firmwareFamily?: string;
-  authType?: string;
-  readStatus?: string;
-  error?: string;
-  hashrate?: number;
-  temp?: number;
-  fan?: number;
-  fanSpeeds?: number[];
-  boardTemps?: number[];
-  boardInletTemps?: number[];
-  boardOutletTemps?: number[];
-  boardHashrates?: number[];
-  boardTheoreticalHashrates?: number[];
-  boardFreqs?: number[];
-  boardHwErrors?: number[];
-  boardChips?: number[];
-  boardStates?: string[];
-  statesOk?: boolean;
-  hashrateRealtime?: number;
-  minerMode?: number;
-  hashrateAverage?: number;
-  runtimeSeconds?: number;
-  poolRejectionRate?: number;
-  expectedHashrate?: number;
-};
 
 type TuyaLinkedDevice = {
   name: string;
@@ -269,12 +237,12 @@ export function MinerGridSection({
             const restartAtMs = miner.lastRestartAt ? new Date(miner.lastRestartAt).getTime() : NaN;
 
             const serverPendingPhase: MinerControlPhase | null =
-              miner.pendingCommandType === "RESTART"
-                ? "RESTARTING"
-                : miner.pendingCommandType === "SLEEP"
-                  ? "SLEEPING"
-                  : miner.pendingCommandType === "WAKE"
-                    ? "WAKING"
+              miner.pendingCommandType === CommandType.RESTART
+                ? MinerControlPhase.RESTARTING
+                : miner.pendingCommandType === CommandType.SLEEP
+                  ? MinerControlPhase.SLEEPING
+                  : miner.pendingCommandType === CommandType.WAKE
+                    ? MinerControlPhase.WAKING
                     : null;
 
             const hasServerWarmup =
@@ -284,20 +252,20 @@ export function MinerGridSection({
               !isHashrateReady(metric ?? null);
 
             const effectivePhase: MinerControlPhase | null =
-              control?.phase ?? serverPendingPhase ?? (hasServerWarmup ? "WARMING_UP" : null);
+              control?.phase ?? serverPendingPhase ?? (hasServerWarmup ? MinerControlPhase.WARMING_UP : null);
             const pendingAction = pendingActionByMiner[miner.minerId];
             const minerMode = typeof metric?.minerMode === "number" ? metric.minerMode : null;
             const isActuallyOffline = online === false;
             const isActuallySleeping = online === true && minerMode === 1;
             const isSleepingLike = isActuallySleeping;
-            const readStatusUpper = String(metric?.readStatus ?? "").toUpperCase();
+            const readStatus = metric?.readStatus;
             const shouldHideBoardStates =
               isSleepingLike ||
-              effectivePhase === "SLEEPING" ||
-              pendingAction === "SLEEP" ||
+              effectivePhase === MinerControlPhase.SLEEPING ||
+              pendingAction === CommandType.SLEEP ||
               online !== true ||
-              readStatusUpper === "FAILED" ||
-              readStatusUpper === "OFFLINE";
+              readStatus === ReadStatus.FAILED ||
+              readStatus === ReadStatus.OFFLINE;
             const overheatLocked = miner.overheatLocked === true;
             const overheatTempDisplay =
               typeof miner.overheatLastTempC === "number" && Number.isFinite(miner.overheatLastTempC)
@@ -327,9 +295,9 @@ export function MinerGridSection({
 
             const buttonsLocked =
               online === true &&
-              effectivePhase === "RESTARTING" ||
-              (online === true && effectivePhase === "WAKING") ||
-              (online === true && effectivePhase === "WARMING_UP");
+              effectivePhase === MinerControlPhase.RESTARTING ||
+              (online === true && effectivePhase === MinerControlPhase.WAKING) ||
+              (online === true && effectivePhase === MinerControlPhase.WARMING_UP);
             const hasPendingAction = Boolean(pendingAction);
             const restartDisabled = hasPendingAction || buttonsLocked || overheatLocked || online !== true || isSleepingLike;
             const sleepDisabled = hasPendingAction || buttonsLocked || online !== true || isSleepingLike;
@@ -337,13 +305,13 @@ export function MinerGridSection({
               hasPendingAction || buttonsLocked || overheatLocked || !isSleepingLike;
             const restartDisabledFinal = restartDisabled || overheatLocked;
             const restartInProgress =
-              pendingAction === "RESTART" ||
-              (online === true && effectivePhase === "RESTARTING") ||
-              (online === true && effectivePhase === "WARMING_UP" && control?.source === "RESTART");
+              pendingAction === CommandType.RESTART ||
+              (online === true && effectivePhase === MinerControlPhase.RESTARTING) ||
+              (online === true && effectivePhase === MinerControlPhase.WARMING_UP && control?.source === "RESTART");
             const wakeInProgress =
-              pendingAction === "WAKE" ||
-              (online === true && effectivePhase === "WAKING") ||
-              (online === true && effectivePhase === "WARMING_UP" &&
+              pendingAction === CommandType.WAKE ||
+              (online === true && effectivePhase === MinerControlPhase.WAKING) ||
+              (online === true && effectivePhase === MinerControlPhase.WARMING_UP &&
                 (control?.source === "WAKE" || control?.source === "POWER_ON"));
             const actionButtonSx = {
               borderRadius: "8px !important",
@@ -918,7 +886,7 @@ export function MinerGridSection({
                             color="primary"
                             disabled={restartDisabledFinal}
                             sx={actionButtonSx}
-                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, "RESTART")}
+                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.RESTART)}
                             startIcon={restartInProgress ? <ButtonSpinnerIcon color={restartDisabledFinal ? "#94a3b8" : "currentColor"} /> : null}
                           >
                             {t(uiLang, "restart")}
@@ -929,8 +897,8 @@ export function MinerGridSection({
                             color="inherit"
                             disabled={sleepDisabled}
                             sx={actionButtonSx}
-                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, "SLEEP")}
-                            startIcon={pendingAction === "SLEEP" ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
+                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.SLEEP)}
+                            startIcon={pendingAction === CommandType.SLEEP ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
                           >
                             {t(uiLang, "sleep")}
                           </Button>
@@ -940,7 +908,7 @@ export function MinerGridSection({
                             color="success"
                             disabled={wakeDisabled}
                             sx={actionButtonSx}
-                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, "WAKE")}
+                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.WAKE)}
                             startIcon={wakeInProgress ? <ButtonSpinnerIcon color={wakeDisabled ? "#9ca3af" : "currentColor"} /> : null}
                           >
                             {t(uiLang, "wake")}

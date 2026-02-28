@@ -4,6 +4,7 @@ import { commands, minerStates } from "@/app/lib/store";
 import type { NextRequest } from "next/server";
 import { getAllowedMinerIds } from "@/app/lib/access-config";
 import { requireWebAuth } from "@/app/lib/web-auth";
+import { CommandStatus, CommandType } from "@/app/lib/types";
 
 const COMMAND_PENDING_TIMEOUT_MS = 12 * 60 * 1000;
 
@@ -23,19 +24,19 @@ export async function GET(request: NextRequest) {
     const staleBefore = new Date(Date.now() - COMMAND_PENDING_TIMEOUT_MS);
     await prisma.command.updateMany({
       where: {
-        status: "PENDING",
-        type: { in: ["RESTART", "SLEEP", "WAKE"] },
+        status: CommandStatus.PENDING,
+        type: { in: [CommandType.RESTART, CommandType.SLEEP, CommandType.WAKE] },
         createdAt: { lt: staleBefore },
       },
       data: {
-        status: "FAILED",
+        status: CommandStatus.FAILED,
         executedAt: new Date(),
         error: "Command timed out while waiting for miner acknowledgement.",
       },
     });
     const pendingCommands = await prisma.command.findMany({
       where: {
-        status: "PENDING", type: { in: ["RESTART", "SLEEP", "WAKE"] }, minerId: { in: [...allowedMinerIds] },
+        status: CommandStatus.PENDING, type: { in: [CommandType.RESTART, CommandType.SLEEP, CommandType.WAKE] }, minerId: { in: [...allowedMinerIds] },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -111,8 +112,8 @@ export async function GET(request: NextRequest) {
           commands.find(
             (cmd) =>
               cmd.minerId === miner.minerId &&
-              cmd.status === "PENDING" &&
-              (cmd.type === "RESTART" || cmd.type === "SLEEP" || cmd.type === "WAKE"),
+              cmd.status === CommandStatus.PENDING &&
+              (cmd.type === CommandType.RESTART || cmd.type === CommandType.SLEEP || cmd.type === CommandType.WAKE),
           )?.type ?? null,
         expectedHashrate: miner.expectedHashrate ?? undefined,
         autoRestartEnabled: miner.autoRestartEnabled ?? false,

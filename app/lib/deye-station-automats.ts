@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { useGlobalSlice } from "@/app/lib/global-state";
 
 type BindingsByStation = Record<string, string[]>;
 
@@ -7,22 +8,18 @@ type StoreShape = {
   bindingsByStation: BindingsByStation;
 };
 
-type GlobalState = {
-  __deyeStationAutomatsStore?: StoreShape;
-  __deyeStationAutomatsWriteChain?: Promise<unknown>;
+type StoreSlice = {
+  store: StoreShape;
+  writeChain: Promise<unknown>;
 };
 
 const DEFAULT_STORE: StoreShape = { bindingsByStation: {} };
 const STORE_FILE_NAME = "deye.station.automats.json";
 
-const globalState = globalThis as unknown as GlobalState;
-
-if (!globalState.__deyeStationAutomatsStore) {
-  globalState.__deyeStationAutomatsStore = DEFAULT_STORE;
-}
-if (!globalState.__deyeStationAutomatsWriteChain) {
-  globalState.__deyeStationAutomatsWriteChain = Promise.resolve();
-}
+const storeSlice = useGlobalSlice<StoreSlice>("deyeStationAutomats", () => ({
+  store: DEFAULT_STORE,
+  writeChain: Promise.resolve(),
+}));
 
 function getStorePath(): string {
   const fromEnv = (process.env.DEYE_STATION_AUTOMATS_PATH ?? "").trim();
@@ -81,15 +78,15 @@ async function readStore(): Promise<StoreShape> {
   try {
     const raw = await readFile(getStorePath(), "utf8");
     const parsed = sanitizeStore(JSON.parse(raw));
-    globalState.__deyeStationAutomatsStore = parsed;
+    storeSlice.store = parsed;
     return parsed;
   } catch {
-    return globalState.__deyeStationAutomatsStore ?? DEFAULT_STORE;
+    return storeSlice.store;
   }
 }
 
 async function writeStore(store: StoreShape): Promise<void> {
-  globalState.__deyeStationAutomatsStore = store;
+  storeSlice.store = store;
   try {
     const filePath = getStorePath();
     await mkdir(dirname(filePath), { recursive: true });
@@ -102,9 +99,9 @@ async function writeStore(store: StoreShape): Promise<void> {
 }
 
 async function withStoreWriteLock<T>(op: () => Promise<T>): Promise<T> {
-  const chain = globalState.__deyeStationAutomatsWriteChain ?? Promise.resolve();
+  const chain = storeSlice.writeChain;
   const run = chain.then(op, op);
-  globalState.__deyeStationAutomatsWriteChain = run.then(
+  storeSlice.writeChain = run.then(
     () => undefined,
     () => undefined,
   );
