@@ -172,7 +172,7 @@ function extractBoardCount(metric: unknown): number {
   };
 
   const chainIndexMax = Array.isArray(m.boardStates)
-    ? m.boardStates.reduce((max, state) => {
+    ? m.boardStates.reduce<number>((max, state) => {
         if (typeof state !== "string") return max;
         const hit = /^chain(\d+):/i.exec(state.trim());
         if (!hit) return max;

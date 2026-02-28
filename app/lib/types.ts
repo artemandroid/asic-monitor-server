@@ -54,7 +54,7 @@ export type MinerState = {
   overheatLocked?: boolean;
   overheatLockedAt?: string | null;
   overheatLastTempC?: number | null;
-  expectedHashrate?: number;
+  expectedHashrate?: number | null;
   lastMetric: MinerMetric | null;
 };
 

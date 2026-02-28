@@ -314,6 +314,7 @@ export async function runPowerAutomation(): Promise<void> {
       }
 
       if (!hasBoundDevice) continue;
+      if (!device) continue;
 
       if (shouldOff && (tuyaUnavailable || deviceUnavailable)) {
         const lockKey = `${miner.id}:SLEEP_FALLBACK`;

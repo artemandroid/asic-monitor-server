@@ -73,7 +73,7 @@ export async function PUT(request: NextRequest) {
     if (!canAccessMiner(email, minerId, allMinerIds)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    await prisma.$transaction(async (tx: typeof prisma) => {
+    await prisma.$transaction(async (tx) => {
       if (deviceId) {
         await tx.miner.updateMany({
           where: { boundTuyaDeviceId: deviceId, id: { not: minerId } },

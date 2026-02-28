@@ -59,7 +59,6 @@ export async function GET(request: NextRequest) {
       boundTuyaDeviceId: string | null;
       autoPowerOffGenerationBelowKw: number | null;
       autoPowerOnGenerationAboveKw: number | null;
-      autoPowerOnWhenGenerationCoversConsumption: boolean;
       autoPowerOffBatteryBelowPercent: number | null;
       autoPowerOnBatteryAbovePercent: number | null;
       autoPowerRestoreDelayMinutes: number;
