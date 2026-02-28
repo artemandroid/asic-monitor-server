@@ -172,7 +172,12 @@ export default function AuthPage() {
         }}
       >
         <Stack spacing={1.5}>
-          <Typography variant="h4" fontWeight={900}>{t(uiLang, "mining_control")}</Typography>
+          <Box
+            component="img"
+            src="/mining-control-logo-light.svg"
+            alt={t(uiLang, "mining_control")}
+            sx={{ width: 56, height: "auto", display: "block" }}
+          />
           <Typography variant="body2" color="text.secondary">
             {t(uiLang, "login_with_your_allowed_google_email")}
           </Typography>

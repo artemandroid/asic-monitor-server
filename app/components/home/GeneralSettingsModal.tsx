@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
+import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
 import {
   Button,
   Dialog,
@@ -11,6 +12,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { CancelButton } from "@/app/components/ui/CancelButton";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
 type GeneralSettings = {
@@ -29,18 +31,24 @@ type GeneralSettingsModalProps = {
   uiLang: UiLang;
   draft: GeneralSettings;
   generalSettingsSaving: boolean;
+  reloadPending: boolean;
+  canReloadConfig: boolean;
   setDraft: Dispatch<SetStateAction<GeneralSettings | null>>;
   onClose: () => void;
   onSave: () => void;
+  onReloadConfig: () => void;
 };
 
 export function GeneralSettingsModal({
   uiLang,
   draft,
   generalSettingsSaving,
+  reloadPending,
+  canReloadConfig,
   setDraft,
   onClose,
   onSave,
+  onReloadConfig,
 }: GeneralSettingsModalProps) {
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="sm">
@@ -182,9 +190,19 @@ export function GeneralSettingsModal({
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button variant="outlined" color="inherit" onClick={onClose}>
-          {t(uiLang, "cancel")}
+        <Button
+          variant="outlined"
+          color="secondary"
+          startIcon={<CloudDownloadRoundedIcon />}
+          onClick={onReloadConfig}
+          disabled={reloadPending || !canReloadConfig}
+          sx={{ mr: "auto" }}
+        >
+          {reloadPending ? t(uiLang, "reloading") : t(uiLang, "reload_config")}
         </Button>
+        <CancelButton onClick={onClose}>
+          {t(uiLang, "cancel")}
+        </CancelButton>
         <Button onClick={onSave} disabled={generalSettingsSaving}>
           {generalSettingsSaving ? t(uiLang, "saving") : t(uiLang, "save")}
         </Button>

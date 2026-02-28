@@ -15,6 +15,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { CancelButton } from "@/app/components/ui/CancelButton";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
 type MinerSettingsPanel = {
@@ -66,7 +67,6 @@ function PresetButtons({
           variant="outlined"
           color="inherit"
           onClick={() => onSelect(preset)}
-          sx={{ borderRadius: 999 }}
         >
           {format ? format(preset) : String(preset)}
         </Button>
@@ -474,9 +474,9 @@ export function MinerSettingsModal({
           </Button>
         )}
         <Box sx={{ flex: 1 }} />
-        <Button variant="outlined" color="inherit" onClick={onClose}>
+        <CancelButton onClick={onClose}>
           {t(uiLang, "cancel")}
-        </Button>
+        </CancelButton>
         <Button onClick={onSave} disabled={minerSettingsSaving}>
           {minerSettingsSaving ? t(uiLang, "saving") : t(uiLang, "save")}
         </Button>

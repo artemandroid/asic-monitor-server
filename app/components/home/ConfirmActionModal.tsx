@@ -1,4 +1,5 @@
 import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Typography } from "@mui/material";
+import { CancelButton } from "@/app/components/ui/CancelButton";
 import { CommandType } from "@/app/lib/types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
@@ -52,9 +53,9 @@ export function ConfirmActionModal({
         </Typography>
       </DialogContent>
       <DialogActions>
-        <Button variant="outlined" color="inherit" onClick={onClose}>
+        <CancelButton onClick={onClose}>
           {t(uiLang, "cancel")}
-        </Button>
+        </CancelButton>
         <Button color="primary" onClick={onConfirm} autoFocus>
           {t(uiLang, "confirm")}
         </Button>

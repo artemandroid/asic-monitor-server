@@ -4,14 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { clearAuthState, getAuthState, setAuthState } from "@/app/lib/auth-client";
 import { readUiLang, t, type UiLang, writeUiLang } from "@/app/lib/ui-lang";
-import {
-  CommandType,
-  MinerControlPhase,
-  type MinerControlState,
-  type MinerState,
-  type Notification,
-} from "@/app/lib/types";
-import type { DeyeStationSnapshot } from "@/app/lib/deye-types";
+import { CommandType, MinerControlPhase, type Notification } from "@/app/lib/types";
 import {
   CONTROL_ACTION_LOCK_MS,
   DEFAULT_DEYE_SYNC_MS,
@@ -20,6 +13,15 @@ import {
   FIXED_TUYA_SYNC_SEC,
   LOW_HASHRATE_RESTART_GRACE_MS,
 } from "@/app/lib/constants";
+import { useDeyeSync } from "@/app/hooks/useDeyeSync";
+import { useMinerSync } from "@/app/hooks/useMinerSync";
+import { useTuyaSync } from "@/app/hooks/useTuyaSync";
+import {
+  groupKeyFor,
+  localizeNotificationMessage,
+  restartActionStateForNote,
+} from "@/app/lib/notification-utils";
+import { formatLastSeen, formatRuntime, toGh } from "@/app/lib/format-utils";
 
 const NOTIFICATION_VISIBLE_COUNT_KEY = "mc_notification_visible_count";
 const BOARD_COUNT_BY_MINER_KEY = "mc_board_count_by_miner";
@@ -71,134 +73,18 @@ type TuyaDevice = {
   productName: string | null;
 };
 
-type TuyaSnapshot = {
-  updatedAt: string;
-  total: number;
-  devices: TuyaDevice[];
-  error?: string;
-};
-
 type PendingConfirmAction =
   | { kind: "MINER_COMMAND"; minerId: string; command: CommandType }
   | { kind: "TUYA_SWITCH"; device: TuyaDevice; on: boolean };
 
-function normalizeDeyeStationAutomatBindings(value: unknown): Record<string, string[]> {
-  if (!value || typeof value !== "object") return {};
-  const next: Record<string, string[]> = {};
-  for (const [stationKeyRaw, deviceIdsRaw] of Object.entries(value as Record<string, unknown>)) {
-    const stationNum = Number.parseInt(stationKeyRaw, 10);
-    if (!Number.isFinite(stationNum) || stationNum <= 0 || !Array.isArray(deviceIdsRaw)) continue;
-    const unique = new Set<string>();
-    for (const item of deviceIdsRaw) {
-      if (typeof item !== "string") continue;
-      const normalized = item.trim();
-      if (!normalized) continue;
-      unique.add(normalized);
-    }
-    if (unique.size > 0) {
-      next[String(Math.trunc(stationNum))] = [...unique];
-    }
-  }
-  return next;
-}
-
-function extractBoardCount(metric: unknown): number {
-  if (!metric || typeof metric !== "object") return 0;
-  const m = metric as {
-    boardChips?: unknown[];
-    boardHwErrors?: unknown[];
-    boardFreqs?: unknown[];
-    boardHashrates?: unknown[];
-    boardTheoreticalHashrates?: unknown[];
-    boardInletTemps?: unknown[];
-    boardOutletTemps?: unknown[];
-    boardStates?: unknown[];
-  };
-
-  const chainIndexMax = Array.isArray(m.boardStates)
-    ? m.boardStates.reduce<number>((max, state) => {
-        if (typeof state !== "string") return max;
-        const hit = /^chain(\d+):/i.exec(state.trim());
-        if (!hit) return max;
-        const idx = Number.parseInt(hit[1], 10);
-        return Number.isFinite(idx) ? Math.max(max, idx + 1) : max;
-      }, 0)
-    : 0;
-
-  return Math.max(
-    Array.isArray(m.boardChips) ? m.boardChips.length : 0,
-    Array.isArray(m.boardHwErrors) ? m.boardHwErrors.length : 0,
-    Array.isArray(m.boardFreqs) ? m.boardFreqs.length : 0,
-    Array.isArray(m.boardHashrates) ? m.boardHashrates.length : 0,
-    Array.isArray(m.boardTheoreticalHashrates) ? m.boardTheoreticalHashrates.length : 0,
-    Array.isArray(m.boardInletTemps) ? m.boardInletTemps.length : 0,
-    Array.isArray(m.boardOutletTemps) ? m.boardOutletTemps.length : 0,
-    chainIndexMax,
-  );
-}
-
 export function useHomeController() {
   const router = useRouter();
-  const [authChecked, setAuthChecked] = useState(false);
-  const [uiLang, setUiLang] = useState<UiLang>("en");
-  const lastSeenRef = useRef<Map<string, string | null>>(new Map());
   const audioCtxRef = useRef<AudioContext | null>(null);
 
-  const [miners, setMiners] = useState<MinerState[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [clientNotifications, setClientNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [reloadPending, setReloadPending] = useState(false);
-  const [groupNotifications, setGroupNotifications] = useState(false);
-  const [groupedKeys, setGroupedKeys] = useState<string[]>([]);
-  const [groupingLoaded, setGroupingLoaded] = useState(false);
-  const [minerOrder, setMinerOrder] = useState<string[]>([]);
-  const [orderLoaded, setOrderLoaded] = useState(false);
-  const [minerAliases, setMinerAliases] = useState<Record<string, string>>({});
-  const [aliasesLoaded, setAliasesLoaded] = useState(false);
-  const [editingAliasFor, setEditingAliasFor] = useState<string | null>(null);
-  const [aliasDraft, setAliasDraft] = useState("");
-  const [minerControlStates, setMinerControlStates] = useState<Record<string, MinerControlState>>(
-    {},
-  );
-  const [controlStateLoaded, setControlStateLoaded] = useState(false);
-  const [showGeneralSettings, setShowGeneralSettings] = useState(false);
-  const [generalSettingsDraft, setGeneralSettingsDraft] = useState<GeneralSettings | null>(null);
-  const [generalSettingsSaving, setGeneralSettingsSaving] = useState(false);
-  const [notificationVisibleCount, setNotificationVisibleCount] = useState(2);
-  const [minerSyncMs, setMinerSyncMs] = useState(DEFAULT_MINER_SYNC_MS);
-  const [deyeSyncMs, setDeyeSyncMs] = useState(DEFAULT_DEYE_SYNC_MS);
-  const [tuyaSyncMs, setTuyaSyncMs] = useState(DEFAULT_TUYA_SYNC_MS);
-  const [boardCountByMiner, setBoardCountByMiner] = useState<Record<string, number>>({});
-  const [boardCountLoaded, setBoardCountLoaded] = useState(false);
-  const [activeMinerSettingsId, setActiveMinerSettingsId] = useState<string | null>(null);
-  const [minerSettingsDraft, setMinerSettingsDraft] = useState<MinerSettingsPanel | null>(null);
-  const [minerSettingsSaving, setMinerSettingsSaving] = useState(false);
-  const [pendingActionByMiner, setPendingActionByMiner] = useState<Record<string, CommandType | undefined>>({});
-  const [deyeStation, setDeyeStation] = useState<DeyeStationSnapshot | null>(null);
-  const [deyeLoading, setDeyeLoading] = useState(false);
-  const [deyeAutomatsByStation, setDeyeAutomatsByStation] = useState<Record<string, string[]>>({});
-  const [deyeAutomatsLoaded, setDeyeAutomatsLoaded] = useState(false);
-  const [deyeAutomatsSaving, setDeyeAutomatsSaving] = useState(false);
-  const [tuyaData, setTuyaData] = useState<TuyaSnapshot | null>(null);
-  const [tuyaLoading, setTuyaLoading] = useState(false);
-  const [tuyaBindingByMiner, setTuyaBindingByMiner] = useState<Record<string, string>>({});
-  const [pendingTuyaByDevice, setPendingTuyaByDevice] = useState<Record<string, "ON" | "OFF" | undefined>>({});
-  const [hideUnboundAutomats, setHideUnboundAutomats] = useState(false);
-  const [hideUnboundLoaded, setHideUnboundLoaded] = useState(false);
-  const [deyeCollapsed, setDeyeCollapsed] = useState(false);
-  const [tuyaCollapsed, setTuyaCollapsed] = useState(false);
-  const [notificationsCollapsed, setNotificationsCollapsed] = useState(false);
-  const [sectionCollapseLoaded, setSectionCollapseLoaded] = useState(false);
-  const [pendingConfirmAction, setPendingConfirmAction] = useState<PendingConfirmAction | null>(
-    null,
-  );
-  const minerGridRef = useRef<HTMLDivElement | null>(null);
-  const [statusBadgesVertical, setStatusBadgesVertical] = useState(false);
-  const refreshMainRef = useRef<() => Promise<void>>(async () => {});
-  const fetchDeyeStationRef = useRef<() => Promise<void>>(async () => {});
-  const fetchTuyaDevicesRef = useRef<() => Promise<void>>(async () => {});
-  const processedCommandResultIdsRef = useRef<Set<string>>(new Set());
+  // ─── Auth ────────────────────────────────────────────────────────────────────
+
+  const [authChecked, setAuthChecked] = useState(false);
+  const [uiLang, setUiLang] = useState<UiLang>("en");
 
   useEffect(() => {
     setUiLang(readUiLang());
@@ -228,192 +114,6 @@ export function useHomeController() {
   }, [router]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem("mc_notification_grouping");
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw) as {
-        groupAll?: boolean;
-        groupedKeys?: string[];
-      };
-      if (typeof parsed.groupAll === "boolean") {
-        setGroupNotifications(parsed.groupAll);
-      }
-      if (Array.isArray(parsed.groupedKeys)) {
-        setGroupedKeys(parsed.groupedKeys.filter((key) => typeof key === "string"));
-      }
-    } catch {
-      // ignore corrupted storage
-    }
-    setGroupingLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem("mc_miner_order");
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw) as string[];
-      if (Array.isArray(parsed)) {
-        setMinerOrder(parsed.filter((id) => typeof id === "string"));
-      }
-    } catch {
-      // ignore corrupted storage
-    }
-    setOrderLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem("mc_miner_aliases");
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw) as Record<string, string>;
-      if (parsed && typeof parsed === "object") {
-        setMinerAliases(parsed);
-      }
-    } catch {
-      // ignore corrupted storage
-    }
-    setAliasesLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    // Do not restore ephemeral control phases after page reload to avoid stale spinners.
-    window.localStorage.removeItem("mc_miner_control_states");
-    setControlStateLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!groupingLoaded) return;
-    const payload = JSON.stringify({
-      groupAll: groupNotifications,
-      groupedKeys,
-    });
-    window.localStorage.setItem("mc_notification_grouping", payload);
-  }, [groupNotifications, groupedKeys, groupingLoaded]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!orderLoaded) return;
-    window.localStorage.setItem("mc_miner_order", JSON.stringify(minerOrder));
-  }, [minerOrder, orderLoaded]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!aliasesLoaded) return;
-    window.localStorage.setItem("mc_miner_aliases", JSON.stringify(minerAliases));
-  }, [minerAliases, aliasesLoaded]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!controlStateLoaded) return;
-    // Keep control state in-memory only.
-    window.localStorage.removeItem("mc_miner_control_states");
-  }, [minerControlStates, controlStateLoaded]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem("mc_hide_unbound_automats");
-    if (raw === "1") {
-      setHideUnboundAutomats(true);
-    }
-    setHideUnboundLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!hideUnboundLoaded) return;
-    window.localStorage.setItem("mc_hide_unbound_automats", hideUnboundAutomats ? "1" : "0");
-  }, [hideUnboundAutomats, hideUnboundLoaded]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem("mc_section_collapsed");
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as { deye?: boolean; tuya?: boolean; notifications?: boolean };
-        if (typeof parsed.deye === "boolean") setDeyeCollapsed(parsed.deye);
-        if (typeof parsed.tuya === "boolean") setTuyaCollapsed(parsed.tuya);
-        if (typeof parsed.notifications === "boolean") setNotificationsCollapsed(parsed.notifications);
-      } catch {
-        // ignore corrupted storage
-      }
-    }
-    setSectionCollapseLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!sectionCollapseLoaded) return;
-    window.localStorage.setItem(
-      "mc_section_collapsed",
-      JSON.stringify({ deye: deyeCollapsed, tuya: tuyaCollapsed, notifications: notificationsCollapsed }),
-    );
-  }, [deyeCollapsed, tuyaCollapsed, notificationsCollapsed, sectionCollapseLoaded]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem(NOTIFICATION_VISIBLE_COUNT_KEY);
-    if (!raw) return;
-    const parsed = Number.parseInt(raw, 10);
-    if (Number.isFinite(parsed) && parsed >= 1) {
-      setNotificationVisibleCount(parsed);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(
-      NOTIFICATION_VISIBLE_COUNT_KEY,
-      String(Math.max(1, Math.floor(notificationVisibleCount))),
-    );
-  }, [notificationVisibleCount]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem(BOARD_COUNT_BY_MINER_KEY);
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as Record<string, number>;
-        if (parsed && typeof parsed === "object") {
-          const next: Record<string, number> = {};
-          for (const [minerId, count] of Object.entries(parsed)) {
-            const num = Number(count);
-            if (Number.isFinite(num) && num > 0) {
-              next[minerId] = Math.floor(num);
-            }
-          }
-          setBoardCountByMiner(next);
-        }
-      } catch {
-        // ignore corrupted storage
-      }
-    }
-    setBoardCountLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!boardCountLoaded) return;
-    window.localStorage.setItem(BOARD_COUNT_BY_MINER_KEY, JSON.stringify(boardCountByMiner));
-  }, [boardCountByMiner, boardCountLoaded]);
-
-  useEffect(() => {
-    const grid = minerGridRef.current;
-    if (!grid || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? 0;
-      const estimatedCardWidth = (width - 20) / 3;
-      setStatusBadgesVertical(estimatedCardWidth < 600);
-    });
-    observer.observe(grid);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
     if (!authChecked) return;
     const id = setInterval(() => {
       const state = getAuthState();
@@ -424,34 +124,9 @@ export function useHomeController() {
     return () => clearInterval(id);
   }, [authChecked, router]);
 
-  useEffect(() => {
-    if (!authChecked) return;
-    const loadSettings = async () => {
-      try {
-        const res = await fetch("/api/settings", { cache: "no-store" });
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          notificationVisibleCount?: number;
-          minerSyncIntervalSec?: number;
-          deyeSyncIntervalSec?: number;
-          tuyaSyncIntervalSec?: number;
-        };
-        if (typeof data.notificationVisibleCount === "number" && data.notificationVisibleCount >= 1) {
-          setNotificationVisibleCount(Math.floor(data.notificationVisibleCount));
-        }
-        if (typeof data.minerSyncIntervalSec === "number" && data.minerSyncIntervalSec >= 5) {
-          setMinerSyncMs(Math.floor(data.minerSyncIntervalSec) * 1000);
-        }
-        if (typeof data.deyeSyncIntervalSec === "number" && data.deyeSyncIntervalSec >= 5) {
-          setDeyeSyncMs(Math.floor(data.deyeSyncIntervalSec) * 1000);
-        }
-        setTuyaSyncMs(FIXED_TUYA_SYNC_SEC * 1000);
-      } catch {
-        // ignore
-      }
-    };
-    void loadSettings();
-  }, [authChecked]);
+  // ─── Notifications ───────────────────────────────────────────────────────────
+
+  const [clientNotifications, setClientNotifications] = useState<Notification[]>([]);
 
   const pushClientNotification = (message: string) => {
     setClientNotifications((prev) => {
@@ -467,7 +142,9 @@ export function useHomeController() {
 
   const playAlertBeep = () => {
     try {
-      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      const Ctx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!Ctx) return;
       if (!audioCtxRef.current) {
         audioCtxRef.current = new Ctx();
@@ -497,536 +174,315 @@ export function useHomeController() {
     }
   };
 
-  const fetchMiners = async () => {
-    if (!getAuthState()) {
-      router.replace("/auth");
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await fetch("/api/miners");
-      if (!res.ok) {
-        throw new Error(`Failed to fetch miners: ${res.status}`);
-      }
-      const data = (await res.json()) as MinerState[];
-      const now = Date.now();
-      let shouldBeep = false;
-      for (const miner of data) {
-        const previousSeen = lastSeenRef.current.get(miner.minerId) ?? null;
-        const currentSeen = miner.lastSeen ?? null;
-        lastSeenRef.current.set(miner.minerId, currentSeen);
-        if (!currentSeen || currentSeen === previousSeen) {
-          continue;
-        }
-        const metric = (miner.lastMetric ?? {}) as {
-          online?: boolean;
-          hashrate?: number;
-          expectedHashrate?: number;
-        };
-        if (metric.online !== true) {
-          continue;
-        }
-        if (
-          typeof metric.hashrate !== "number" ||
-          typeof metric.expectedHashrate !== "number" ||
-          metric.expectedHashrate <= 0
-        ) {
-          continue;
-        }
-        const threshold = metric.expectedHashrate;
-        if (metric.hashrate >= threshold) {
-          continue;
-        }
-        if (miner.lastRestartAt) {
-          const restartMs = new Date(miner.lastRestartAt).getTime();
-          if (Number.isFinite(restartMs) && now - restartMs < LOW_HASHRATE_RESTART_GRACE_MS) {
-            continue;
-          }
-        }
-        shouldBeep = true;
-      }
-      setMiners(data);
-      setBoardCountByMiner((prev) => {
-        const next = { ...prev };
-        for (const miner of data) {
-          const count = extractBoardCount(miner.lastMetric);
-          if (count > 0) {
-            next[miner.minerId] = Math.max(next[miner.minerId] ?? 0, count);
-          }
-        }
-        return next;
-      });
-      setTuyaBindingByMiner(() => {
-        const next: Record<string, string> = {};
-        for (const miner of data) {
-          if (typeof miner.boundTuyaDeviceId === "string" && miner.boundTuyaDeviceId) {
-            next[miner.minerId] = miner.boundTuyaDeviceId;
-          }
-        }
-        return next;
-      });
-      reconcileControlStates(data);
-      setMinerOrder((prev) => {
-        const next = [...prev];
-        for (const m of data) {
-          if (!next.includes(m.minerId)) next.push(m.minerId);
-        }
-        return next.filter((id) => data.some((m) => m.minerId === id));
-      });
-      if (shouldBeep) {
-        playAlertBeep();
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      pushClientNotification(message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // ─── Domain hooks ────────────────────────────────────────────────────────────
 
-  const isHashrateReady = (metric: {
-    expectedHashrate?: number;
-    hashrate?: number;
-    hashrateRealtime?: number;
-    online?: boolean;
-  } | null): boolean => {
-    if (!metric || metric.online !== true) return false;
-    if (
-      typeof metric.expectedHashrate !== "number" ||
-      metric.expectedHashrate <= 0
-    ) {
-      return false;
-    }
-    if (typeof metric.hashrateRealtime !== "number") {
-      return false;
-    }
-    const realtimeMh =
-      metric.hashrateRealtime > 500 ? metric.hashrateRealtime : metric.hashrateRealtime * 1000;
-    return realtimeMh >= metric.expectedHashrate * 0.9;
-  };
+  const minerSync = useMinerSync({ pushNotification: pushClientNotification, playAlertBeep });
+  const deyeSync = useDeyeSync(pushClientNotification);
 
-  const isSleepingState = (metric: {
-    expectedHashrate?: number;
-    hashrate?: number;
-    hashrateRealtime?: number;
-    minerMode?: number;
-    online?: boolean;
-  } | null): boolean => {
-    if (!metric) return false;
-    return metric.minerMode === 1;
-  };
+  // Refs allow stable async callbacks across hooks without stale closures.
+  const fetchMinersRef = useRef<() => Promise<void>>(minerSync.fetchMiners);
+  fetchMinersRef.current = minerSync.fetchMiners;
 
-  const reconcileControlStates = (data: MinerState[]) => {
-    setMinerControlStates((prev) => {
-      const next: Record<string, MinerControlState> = {};
-      const now = Date.now();
-      let changed = false;
+  const tuyaBindingRef = useRef<Record<string, string>>(minerSync.tuyaBindingByMiner);
+  tuyaBindingRef.current = minerSync.tuyaBindingByMiner;
 
-      for (const miner of data) {
-        const current = prev[miner.minerId];
-        if (!current) continue;
-        const metric = miner.lastMetric as
-          | {
-              expectedHashrate?: number;
-              hashrate?: number;
-              hashrateRealtime?: number;
-              minerMode?: number;
-              online?: boolean;
-            }
-          | null;
-        const online = metric?.online === true;
-        const ready = isHashrateReady(metric);
-        const sleeping = isSleepingState(metric);
-        const hasPendingServerCommand =
-          miner.pendingCommandType === CommandType.RESTART ||
-          miner.pendingCommandType === CommandType.SLEEP ||
-          miner.pendingCommandType === CommandType.WAKE;
+  const tuyaSync = useTuyaSync({
+    pushNotification: pushClientNotification,
+    tuyaBindingRef,
+    fetchMinersRef,
+    setMinerControlStates: minerSync.setMinerControlStates,
+  });
 
-        if (!hasPendingServerCommand && online && !sleeping) {
-          if (
-            current.phase === MinerControlPhase.RESTARTING ||
-            current.phase === MinerControlPhase.WAKING ||
-            current.phase === MinerControlPhase.WARMING_UP ||
-            current.phase === MinerControlPhase.SLEEPING
-          ) {
-            changed = true;
-            continue;
-          }
-        }
+  // ─── Sync intervals ──────────────────────────────────────────────────────────
 
-        if (now - current.since > CONTROL_ACTION_LOCK_MS * 6) {
-          changed = true;
-          continue;
-        }
+  const [minerSyncMs, setMinerSyncMs] = useState(DEFAULT_MINER_SYNC_MS);
+  const [deyeSyncMs, setDeyeSyncMs] = useState(DEFAULT_DEYE_SYNC_MS);
+  const [tuyaSyncMs, setTuyaSyncMs] = useState(DEFAULT_TUYA_SYNC_MS);
 
-        if (current.phase === MinerControlPhase.RESTARTING) {
-          if (!online) {
-            changed = true;
-            continue;
-          }
-          if (online && !ready) {
-            next[miner.minerId] = { phase: MinerControlPhase.WARMING_UP, since: current.since, source: current.source };
-            changed = true;
-            continue;
-          }
-          if (ready) {
-            changed = true;
-            continue;
-          }
-          next[miner.minerId] = current;
-          continue;
-        }
-
-        if (current.phase === MinerControlPhase.WAKING) {
-          if (!online) {
-            changed = true;
-            continue;
-          }
-          if (online && !ready) {
-            next[miner.minerId] = { phase: MinerControlPhase.WARMING_UP, since: current.since, source: current.source };
-            changed = true;
-            continue;
-          }
-          if (ready) {
-            changed = true;
-            continue;
-          }
-          next[miner.minerId] = current;
-          continue;
-        }
-
-        if (current.phase === MinerControlPhase.WARMING_UP) {
-          if (!online) {
-            changed = true;
-            continue;
-          }
-          if (ready) {
-            changed = true;
-            continue;
-          }
-          next[miner.minerId] = current;
-          continue;
-        }
-
-        if (current.phase === MinerControlPhase.SLEEPING) {
-          if (!sleeping) {
-            changed = true;
-            continue;
-          }
-          next[miner.minerId] = current;
-          continue;
-        }
-      }
-
-      for (const miner of data) {
-        if (!(miner.minerId in next) && prev[miner.minerId]) {
-          changed = true;
-        }
-      }
-
-      return changed ? next : prev;
-    });
-  };
-
-  const fetchNotifications = async () => {
-    if (!getAuthState()) {
-      router.replace("/auth");
-      return;
-    }
-    try {
-      const res = await fetch("/api/notifications");
-      if (!res.ok) {
-        throw new Error(`Failed to fetch notifications: ${res.status}`);
-      }
-      const data = (await res.json()) as Notification[];
-      setNotifications(data);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      pushClientNotification(message);
-    }
-  };
-
-  const fetchDeyeStation = async () => {
-    if (!getAuthState()) {
-      router.replace("/auth");
-      return;
-    }
-    setDeyeLoading(true);
-    try {
-      const res = await fetch("/api/deye/station");
-      const payload = (await res.json()) as DeyeStationSnapshot | { error?: string };
-      if (!res.ok) {
-        throw new Error(
-          typeof payload === "object" && payload && "error" in payload && payload.error
-            ? String(payload.error)
-            : `Failed to fetch Deye station: ${res.status}`,
-        );
-      }
-      setDeyeStation(payload as DeyeStationSnapshot);
-      await fetchDeyeStationAutomats();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      setDeyeStation((prev) => ({
-        stationId: prev?.stationId ?? 0,
-        gridOnline: prev?.gridOnline ?? null,
-        gridStateText: prev?.gridStateText ?? null,
-        gridPowerKw: prev?.gridPowerKw ?? null,
-        gridSignals: prev?.gridSignals ?? {
-          source: "none",
-          flag: { key: null, raw: null, parsed: null },
-          text: { key: null, value: null, parsed: null },
-          power: { key: null, raw: null, kw: null, parsed: null },
-          chargingFallbackParsed: null,
-          dischargingFallbackParsed: null,
-        },
-        batterySoc: prev?.batterySoc ?? null,
-        batteryStatus: prev?.batteryStatus ?? null,
-        batteryDischargePowerKw: prev?.batteryDischargePowerKw ?? null,
-        generationPowerKw: prev?.generationPowerKw ?? null,
-        generationDayKwh: prev?.generationDayKwh ?? null,
-        consumptionPowerKw: prev?.consumptionPowerKw ?? null,
-        energyToday: prev?.energyToday,
-        apiSignals: prev?.apiSignals ?? [],
-        updatedAt: new Date().toISOString(),
-        error: message,
-      }));
-      pushClientNotification(message);
-    } finally {
-      setDeyeLoading(false);
-    }
-  };
-
-  const fetchDeyeStationAutomats = async () => {
-    if (!getAuthState()) {
-      router.replace("/auth");
-      return;
-    }
-    try {
-      const res = await fetch("/api/deye/station-automats", { cache: "no-store" });
-      const payload = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        bindingsByStation?: Record<string, string[]>;
-      };
-      if (!res.ok) {
-        throw new Error(payload.error ?? `Failed to fetch Deye station automats: ${res.status}`);
-      }
-      setDeyeAutomatsByStation(normalizeDeyeStationAutomatBindings(payload.bindingsByStation));
-      setDeyeAutomatsLoaded(true);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      pushClientNotification(message);
-    }
-  };
-
-  const saveDeyeStationAutomatBinding = async (
-    stationId: number,
-    deviceId: string,
-    bind: boolean,
-  ) => {
-    if (!getAuthState()) {
-      router.replace("/auth");
-      return;
-    }
-    if (!Number.isFinite(stationId) || stationId <= 0) return;
-    const normalizedDeviceId = deviceId.trim();
-    if (!normalizedDeviceId) return;
-
-    setDeyeAutomatsSaving(true);
-    try {
-      const res = await fetch("/api/deye/station-automats", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          stationId: Math.trunc(stationId),
-          deviceId: normalizedDeviceId,
-          bind,
-        }),
-      });
-      const payload = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        bindingsByStation?: Record<string, string[]>;
-      };
-      if (!res.ok) {
-        throw new Error(payload.error ?? `Failed to update Deye station automats: ${res.status}`);
-      }
-      setDeyeAutomatsByStation(normalizeDeyeStationAutomatBindings(payload.bindingsByStation));
-      setDeyeAutomatsLoaded(true);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      pushClientNotification(message);
-    } finally {
-      setDeyeAutomatsSaving(false);
-    }
-  };
-
-  const fetchTuyaDevices = async () => {
-    if (!getAuthState()) {
-      router.replace("/auth");
-      return;
-    }
-    setTuyaLoading(true);
-    try {
-      const res = await fetch("/api/tuya/devices");
-      const payload = (await res.json()) as TuyaSnapshot | { error?: string };
-      if (!res.ok) {
-        throw new Error(
-          typeof payload === "object" && payload && "error" in payload && payload.error
-            ? String(payload.error)
-            : `Failed to fetch Tuya devices: ${res.status}`,
-        );
-      }
-      setTuyaData(payload as TuyaSnapshot);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      setTuyaData((prev) => ({
-        updatedAt: new Date().toISOString(),
-        total: prev?.total ?? 0,
-        devices: prev?.devices ?? [],
-        error: message,
-      }));
-      pushClientNotification(message);
-    } finally {
-      setTuyaLoading(false);
-    }
-  };
-
-  const setTuyaSwitch = async (device: TuyaDevice, on: boolean) => {
-    if (!getAuthState()) {
-      router.replace("/auth");
-      return;
-    }
-    const linkedMinerId =
-      Object.entries(tuyaBindingByMiner).find(([, devId]) => devId === device.id)?.[0] ?? null;
-    try {
-      setPendingTuyaByDevice((prev) => ({ ...prev, [device.id]: on ? "ON" : "OFF" }));
-      const res = await fetch("/api/tuya/commands", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          deviceId: device.id,
-          on,
-          code: device.switchCode ?? undefined,
-        }),
-      });
-      const payload = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        throw new Error(payload.error ?? `Failed to switch device: ${res.status}`);
-      }
-      // If this automat is bound to a miner, reflect expected miner power state
-      // immediately so control buttons stay locked during power/warm-up transitions.
-      if (linkedMinerId) {
-        setMinerControlStates((prev) => ({
-          ...prev,
-          [linkedMinerId]: {
-            phase: on ? MinerControlPhase.WARMING_UP : MinerControlPhase.SLEEPING,
-            since: Date.now(),
-            source: on ? "POWER_ON" : undefined,
-          },
-        }));
-      }
-      await fetchTuyaDevices();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      if (linkedMinerId) {
-        const fallbackType: CommandType = on ? CommandType.WAKE : CommandType.SLEEP;
-        try {
-          const fallbackRes = await fetch("/api/commands/create", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ minerId: linkedMinerId, type: fallbackType }),
-          });
-          if (fallbackRes.ok) {
-            pushClientNotification(
-              `Tuya is unavailable. Fallback ${fallbackType} command queued for ${linkedMinerId}.`,
-            );
-            if (fallbackType === CommandType.SLEEP) {
-              setMinerControlStates((prev) => ({
-                ...prev,
-                [linkedMinerId]: { phase: MinerControlPhase.SLEEPING, since: Date.now() },
-              }));
-            } else {
-              setMinerControlStates((prev) => ({
-                ...prev,
-                [linkedMinerId]: { phase: MinerControlPhase.WAKING, since: Date.now(), source: "WAKE" },
-              }));
-            }
-            await fetchMiners();
-            return;
-          }
-        } catch {
-          // Fall through and report original Tuya error below.
-        }
-      }
-      pushClientNotification(message);
-    } finally {
-      setPendingTuyaByDevice((prev) => {
-        const next = { ...prev };
-        delete next[device.id];
-        return next;
-      });
-    }
-  };
-
-  const saveTuyaBinding = async (minerId: string, deviceId: string | null) => {
-    if (!getAuthState()) {
-      router.replace("/auth");
-      return;
-    }
-    const normalizedDeviceId =
-      typeof deviceId === "string" && deviceId.trim().length > 0 ? deviceId.trim() : null;
-    const stationKey =
-      typeof deyeStation?.stationId === "number" && Number.isFinite(deyeStation.stationId)
-        ? String(Math.trunc(deyeStation.stationId))
-        : null;
-    const stationAutomatSet = stationKey ? new Set(deyeAutomatsByStation[stationKey] ?? []) : new Set<string>();
-    const safeDeviceId = !normalizedDeviceId
-      ? null
-      : stationKey && deyeAutomatsLoaded
-        ? stationAutomatSet.has(normalizedDeviceId)
-          ? normalizedDeviceId
-          : null
-        : normalizedDeviceId;
-    if (normalizedDeviceId && stationKey && deyeAutomatsLoaded && !safeDeviceId) {
-      pushClientNotification("Automat is not bound to current Deye station.");
-    }
-    try {
-      const res = await fetch("/api/miners/bindings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minerId, deviceId: safeDeviceId }),
-      });
-      const payload = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        throw new Error(payload.error ?? `Failed to save binding: ${res.status}`);
-      }
-      setTuyaBindingByMiner((prev) => {
-        const next: Record<string, string> = {};
-        for (const [id, dev] of Object.entries(prev)) {
-          if (dev === safeDeviceId) continue;
-          next[id] = dev;
-        }
-        if (safeDeviceId) {
-          next[minerId] = safeDeviceId;
-        }
-        return next;
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      pushClientNotification(message);
-    }
-  };
+  const refreshMainRef = useRef<() => Promise<void>>(async () => {});
+  const fetchDeyeStationRef = useRef<() => Promise<void>>(async () => {});
+  const fetchTuyaDevicesRef = useRef<() => Promise<void>>(async () => {});
 
   const refreshMain = async () => {
-    await Promise.all([fetchMiners(), fetchNotifications()]);
+    await Promise.all([minerSync.fetchMiners(), minerSync.fetchNotifications()]);
   };
 
   const refreshAll = async () => {
-    await Promise.all([refreshMain(), fetchDeyeStation(), fetchTuyaDevices(), fetchDeyeStationAutomats()]);
+    await Promise.all([
+      refreshMain(),
+      deyeSync.fetchDeyeStation(),
+      tuyaSync.fetchTuyaDevices(),
+      deyeSync.fetchDeyeStationAutomats(),
+    ]);
   };
 
   refreshMainRef.current = refreshMain;
-  fetchDeyeStationRef.current = fetchDeyeStation;
-  fetchTuyaDevicesRef.current = fetchTuyaDevices;
+  fetchDeyeStationRef.current = deyeSync.fetchDeyeStation;
+  fetchTuyaDevicesRef.current = tuyaSync.fetchTuyaDevices;
+
+  useEffect(() => {
+    if (!authChecked) return;
+    void refreshMainRef.current();
+    const id = setInterval(() => void refreshMainRef.current(), minerSyncMs);
+    return () => clearInterval(id);
+  }, [authChecked, minerSyncMs]);
+
+  useEffect(() => {
+    if (!authChecked) return;
+    void fetchDeyeStationRef.current();
+    const id = setInterval(() => void fetchDeyeStationRef.current(), deyeSyncMs);
+    return () => clearInterval(id);
+  }, [authChecked, deyeSyncMs]);
+
+  useEffect(() => {
+    if (!authChecked) return;
+    void fetchTuyaDevicesRef.current();
+    const id = setInterval(() => void fetchTuyaDevicesRef.current(), tuyaSyncMs);
+    return () => clearInterval(id);
+  }, [authChecked, tuyaSyncMs]);
+
+  // ─── Server settings load ────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!authChecked) return;
+    const loadSettings = async () => {
+      try {
+        const res = await fetch("/api/settings", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          notificationVisibleCount?: number;
+          minerSyncIntervalSec?: number;
+          deyeSyncIntervalSec?: number;
+        };
+        if (
+          typeof data.notificationVisibleCount === "number" &&
+          data.notificationVisibleCount >= 1
+        ) {
+          setNotificationVisibleCount(Math.floor(data.notificationVisibleCount));
+        }
+        if (typeof data.minerSyncIntervalSec === "number" && data.minerSyncIntervalSec >= 5) {
+          setMinerSyncMs(Math.floor(data.minerSyncIntervalSec) * 1000);
+        }
+        if (typeof data.deyeSyncIntervalSec === "number" && data.deyeSyncIntervalSec >= 5) {
+          setDeyeSyncMs(Math.floor(data.deyeSyncIntervalSec) * 1000);
+        }
+        setTuyaSyncMs(FIXED_TUYA_SYNC_SEC * 1000);
+      } catch {
+        // ignore — server settings unavailable, keep defaults
+      }
+    };
+    void loadSettings();
+  }, [authChecked]);
+
+  // ─── Local persistence ───────────────────────────────────────────────────────
+
+  const [groupNotifications, setGroupNotifications] = useState(false);
+  const [groupedKeys, setGroupedKeys] = useState<string[]>([]);
+  const [groupingLoaded, setGroupingLoaded] = useState(false);
+  const [minerOrder, setMinerOrder] = useState<string[]>([]);
+  const [orderLoaded, setOrderLoaded] = useState(false);
+  const [minerAliases, setMinerAliases] = useState<Record<string, string>>({});
+  const [aliasesLoaded, setAliasesLoaded] = useState(false);
+  const [controlStateLoaded, setControlStateLoaded] = useState(false);
+  const [notificationVisibleCount, setNotificationVisibleCount] = useState(2);
+  const [hideUnboundAutomats, setHideUnboundAutomats] = useState(false);
+  const [hideUnboundLoaded, setHideUnboundLoaded] = useState(false);
+  const [deyeCollapsed, setDeyeCollapsed] = useState(false);
+  const [tuyaCollapsed, setTuyaCollapsed] = useState(false);
+  const [notificationsCollapsed, setNotificationsCollapsed] = useState(false);
+  const [sectionCollapseLoaded, setSectionCollapseLoaded] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem("mc_notification_grouping");
+    if (!raw) { setGroupingLoaded(true); return; }
+    try {
+      const parsed = JSON.parse(raw) as { groupAll?: boolean; groupedKeys?: string[] };
+      if (typeof parsed.groupAll === "boolean") setGroupNotifications(parsed.groupAll);
+      if (Array.isArray(parsed.groupedKeys)) {
+        setGroupedKeys(parsed.groupedKeys.filter((key) => typeof key === "string"));
+      }
+    } catch {
+      // ignore corrupted storage
+    }
+    setGroupingLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem("mc_miner_order");
+    if (!raw) { setOrderLoaded(true); return; }
+    try {
+      const parsed = JSON.parse(raw) as string[];
+      if (Array.isArray(parsed)) {
+        setMinerOrder(parsed.filter((id) => typeof id === "string"));
+      }
+    } catch {
+      // ignore corrupted storage
+    }
+    setOrderLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem("mc_miner_aliases");
+    if (!raw) { setAliasesLoaded(true); return; }
+    try {
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      if (parsed && typeof parsed === "object") setMinerAliases(parsed);
+    } catch {
+      // ignore corrupted storage
+    }
+    setAliasesLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    // Ephemeral control phases are never persisted — avoid stale spinners after reload.
+    window.localStorage.removeItem("mc_miner_control_states");
+    setControlStateLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.localStorage.getItem("mc_hide_unbound_automats") === "1") {
+      setHideUnboundAutomats(true);
+    }
+    setHideUnboundLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem("mc_section_collapsed");
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as {
+          deye?: boolean;
+          tuya?: boolean;
+          notifications?: boolean;
+        };
+        if (typeof parsed.deye === "boolean") setDeyeCollapsed(parsed.deye);
+        if (typeof parsed.tuya === "boolean") setTuyaCollapsed(parsed.tuya);
+        if (typeof parsed.notifications === "boolean")
+          setNotificationsCollapsed(parsed.notifications);
+      } catch {
+        // ignore corrupted storage
+      }
+    }
+    setSectionCollapseLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(NOTIFICATION_VISIBLE_COUNT_KEY);
+    if (!raw) return;
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed >= 1) setNotificationVisibleCount(parsed);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(BOARD_COUNT_BY_MINER_KEY);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      if (parsed && typeof parsed === "object") {
+        const next: Record<string, number> = {};
+        for (const [minerId, count] of Object.entries(parsed)) {
+          const num = Number(count);
+          if (Number.isFinite(num) && num > 0) next[minerId] = Math.floor(num);
+        }
+        minerSync.setBoardCountByMiner(next);
+      }
+    } catch {
+      // ignore corrupted storage
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !groupingLoaded) return;
+    window.localStorage.setItem(
+      "mc_notification_grouping",
+      JSON.stringify({ groupAll: groupNotifications, groupedKeys }),
+    );
+  }, [groupNotifications, groupedKeys, groupingLoaded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !orderLoaded) return;
+    window.localStorage.setItem("mc_miner_order", JSON.stringify(minerOrder));
+  }, [minerOrder, orderLoaded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !aliasesLoaded) return;
+    window.localStorage.setItem("mc_miner_aliases", JSON.stringify(minerAliases));
+  }, [minerAliases, aliasesLoaded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !controlStateLoaded) return;
+    window.localStorage.removeItem("mc_miner_control_states");
+  }, [minerSync.minerControlStates, controlStateLoaded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !hideUnboundLoaded) return;
+    window.localStorage.setItem("mc_hide_unbound_automats", hideUnboundAutomats ? "1" : "0");
+  }, [hideUnboundAutomats, hideUnboundLoaded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !sectionCollapseLoaded) return;
+    window.localStorage.setItem(
+      "mc_section_collapsed",
+      JSON.stringify({ deye: deyeCollapsed, tuya: tuyaCollapsed, notifications: notificationsCollapsed }),
+    );
+  }, [deyeCollapsed, tuyaCollapsed, notificationsCollapsed, sectionCollapseLoaded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      NOTIFICATION_VISIBLE_COUNT_KEY,
+      String(Math.max(1, Math.floor(notificationVisibleCount))),
+    );
+  }, [notificationVisibleCount]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(BOARD_COUNT_BY_MINER_KEY, JSON.stringify(minerSync.boardCountByMiner));
+  }, [minerSync.boardCountByMiner]);
+
+  // ─── Grid resize observer ────────────────────────────────────────────────────
+
+  const minerGridRef = useRef<HTMLDivElement | null>(null);
+  const [statusBadgesVertical, setStatusBadgesVertical] = useState(false);
+
+  useEffect(() => {
+    const grid = minerGridRef.current;
+    if (!grid || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setStatusBadgesVertical((width - 20) / 3 < 600);
+    });
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, []);
+
+  // Sync miner order with server list on miners change.
+  useEffect(() => {
+    setMinerOrder((prev) => {
+      const next = [...prev];
+      for (const m of minerSync.miners) {
+        if (!next.includes(m.minerId)) next.push(m.minerId);
+      }
+      return next.filter((id) => minerSync.miners.some((m) => m.minerId === id));
+    });
+  }, [minerSync.miners]);
+
+  // ─── Settings handlers ───────────────────────────────────────────────────────
+
+  const [showGeneralSettings, setShowGeneralSettings] = useState(false);
+  const [generalSettingsDraft, setGeneralSettingsDraft] = useState<GeneralSettings | null>(null);
+  const [generalSettingsSaving, setGeneralSettingsSaving] = useState(false);
+  const [activeMinerSettingsId, setActiveMinerSettingsId] = useState<string | null>(null);
+  const [minerSettingsDraft, setMinerSettingsDraft] = useState<MinerSettingsPanel | null>(null);
+  const [minerSettingsSaving, setMinerSettingsSaving] = useState(false);
 
   const openGeneralSettings = async () => {
     if (!getAuthState()) {
@@ -1064,9 +520,7 @@ export function useHomeController() {
             ? data.notificationVisibleCount
             : notificationVisibleCount,
         criticalBatteryOffPercent:
-          typeof data.criticalBatteryOffPercent === "number"
-            ? data.criticalBatteryOffPercent
-            : 30,
+          typeof data.criticalBatteryOffPercent === "number" ? data.criticalBatteryOffPercent : 30,
       });
       setShowGeneralSettings(true);
     } catch (err) {
@@ -1091,7 +545,6 @@ export function useHomeController() {
         notificationVisibleCount?: number;
         minerSyncIntervalSec?: number;
         deyeSyncIntervalSec?: number;
-        tuyaSyncIntervalSec?: number;
       };
       const savedCount =
         typeof updated.notificationVisibleCount === "number"
@@ -1149,13 +602,9 @@ export function useHomeController() {
             ? data.overheatProtectionEnabled
             : true,
         overheatShutdownTempC:
-          typeof data.overheatShutdownTempC === "number"
-            ? data.overheatShutdownTempC
-            : 83,
+          typeof data.overheatShutdownTempC === "number" ? data.overheatShutdownTempC : 83,
         overheatSleepMinutes:
-          typeof data.overheatSleepMinutes === "number"
-            ? data.overheatSleepMinutes
-            : 30,
+          typeof data.overheatSleepMinutes === "number" ? data.overheatSleepMinutes : 30,
         overheatLocked: data.overheatLocked === true,
         overheatLockedAt: data.overheatLockedAt ?? null,
         overheatLastTempC:
@@ -1177,7 +626,9 @@ export function useHomeController() {
       typeof onThreshold === "number" &&
       onThreshold < offThreshold + 5
     ) {
-      pushClientNotification("Auto ON battery threshold must be at least Auto OFF threshold + 5%.");
+      pushClientNotification(
+        "Auto ON battery threshold must be at least Auto OFF threshold + 5%.",
+      );
       return;
     }
     setMinerSettingsSaving(true);
@@ -1209,7 +660,7 @@ export function useHomeController() {
       }
       setActiveMinerSettingsId(null);
       setMinerSettingsDraft(null);
-      void fetchMiners();
+      void minerSync.fetchMiners();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       pushClientNotification(message);
@@ -1231,7 +682,7 @@ export function useHomeController() {
       if (!res.ok) {
         throw new Error(payload.error ?? `Failed to unlock control: ${res.status}`);
       }
-      await fetchMiners();
+      await minerSync.fetchMiners();
       if (activeMinerSettingsId === minerId) {
         await openMinerSettings(minerId);
       }
@@ -1241,47 +692,63 @@ export function useHomeController() {
     }
   };
 
-  const createCommand = async (minerId: string, type: CommandType) => {
+  // ─── Tuya binding (cross-domain: tuya + deye) ────────────────────────────────
+
+  const saveTuyaBinding = async (minerId: string, deviceId: string | null) => {
     if (!getAuthState()) {
       router.replace("/auth");
       return;
     }
+    const normalizedDeviceId =
+      typeof deviceId === "string" && deviceId.trim().length > 0 ? deviceId.trim() : null;
+    const stationKey =
+      typeof deyeSync.deyeStation?.stationId === "number" &&
+      Number.isFinite(deyeSync.deyeStation.stationId)
+        ? String(Math.trunc(deyeSync.deyeStation.stationId))
+        : null;
+    const stationAutomatSet = stationKey
+      ? new Set(deyeSync.deyeAutomatsByStation[stationKey] ?? [])
+      : new Set<string>();
+    const safeDeviceId = !normalizedDeviceId
+      ? null
+      : stationKey && deyeSync.deyeAutomatsLoaded
+        ? stationAutomatSet.has(normalizedDeviceId)
+          ? normalizedDeviceId
+          : null
+        : normalizedDeviceId;
+    if (normalizedDeviceId && stationKey && deyeSync.deyeAutomatsLoaded && !safeDeviceId) {
+      pushClientNotification("Automat is not bound to current Deye station.");
+    }
     try {
-      setPendingActionByMiner((prev) => ({ ...prev, [minerId]: type }));
-      const res = await fetch("/api/commands/create", {
-        method: "POST",
+      const res = await fetch("/api/miners/bindings", {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minerId, type }),
+        body: JSON.stringify({ minerId, deviceId: safeDeviceId }),
       });
+      const payload = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error ?? `Failed to create command: ${res.status}`);
+        throw new Error(payload.error ?? `Failed to save binding: ${res.status}`);
       }
-      if (type === CommandType.SLEEP) {
-        setMinerControlStates((prev) => ({
-          ...prev,
-          [minerId]: { phase: MinerControlPhase.SLEEPING, since: Date.now() },
-        }));
-      } else if (type === CommandType.RESTART || type === CommandType.WAKE) {
-        const phase: MinerControlPhase =
-          type === CommandType.RESTART ? MinerControlPhase.RESTARTING : MinerControlPhase.WAKING;
-        setMinerControlStates((prev) => ({
-          ...prev,
-          [minerId]: { phase, since: Date.now(), source: type },
-        }));
-      }
-      await fetchMiners();
+      minerSync.setTuyaBindingByMiner((prev) => {
+        const next: Record<string, string> = {};
+        for (const [id, dev] of Object.entries(prev)) {
+          if (dev === safeDeviceId) continue;
+          next[id] = dev;
+        }
+        if (safeDeviceId) next[minerId] = safeDeviceId;
+        return next;
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       pushClientNotification(message);
-    } finally {
-      setPendingActionByMiner((prev) => {
-        const next = { ...prev };
-        delete next[minerId];
-        return next;
-      });
     }
   };
+
+  // ─── Confirm action ──────────────────────────────────────────────────────────
+
+  const [pendingConfirmAction, setPendingConfirmAction] = useState<PendingConfirmAction | null>(
+    null,
+  );
 
   const requestMinerCommandConfirm = (minerId: string, command: CommandType) => {
     setPendingConfirmAction({ kind: "MINER_COMMAND", minerId, command });
@@ -1296,340 +763,27 @@ export function useHomeController() {
     const action = pendingConfirmAction;
     setPendingConfirmAction(null);
     if (action.kind === "MINER_COMMAND") {
-      await createCommand(action.minerId, action.command);
+      await minerSync.createCommand(action.minerId, action.command);
       return;
     }
-    await setTuyaSwitch(action.device, action.on);
+    await tuyaSync.setTuyaSwitch(action.device, action.on);
   };
 
   const reloadConfig = async () => {
-    if (!getAuthState()) {
-      router.replace("/auth");
-      return;
-    }
-    if (miners.length === 0) {
-      pushClientNotification("No miners to reload.");
-      return;
-    }
-    setReloadPending(true);
+    minerSync.setReloadPending(true);
     try {
-      const type: CommandType = CommandType.RELOAD_CONFIG;
-      for (const miner of miners) {
-        const res = await fetch("/api/commands/create", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ minerId: miner.minerId, type }),
-        });
-        if (!res.ok) {
-          throw new Error(`Failed to create reload command: ${res.status}`);
-        }
-      }
-      await fetchMiners();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      pushClientNotification(message);
+      await minerSync.reloadConfig();
     } finally {
-      setReloadPending(false);
+      minerSync.setReloadPending(false);
     }
   };
+
+  // ─── Command result processing ────────────────────────────────────────────────
+
+  const processedCommandResultIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!authChecked) return;
-    void refreshMainRef.current();
-    const id = setInterval(() => {
-      void refreshMainRef.current();
-    }, minerSyncMs);
-    return () => clearInterval(id);
-  }, [authChecked, minerSyncMs]);
-
-  useEffect(() => {
-    if (!authChecked) return;
-    void fetchDeyeStationRef.current();
-    const id = setInterval(() => {
-      void fetchDeyeStationRef.current();
-    }, deyeSyncMs);
-    return () => clearInterval(id);
-  }, [authChecked, deyeSyncMs]);
-
-  useEffect(() => {
-    if (!authChecked) return;
-    void fetchTuyaDevicesRef.current();
-    const id = setInterval(() => {
-      void fetchTuyaDevicesRef.current();
-    }, tuyaSyncMs);
-    return () => clearInterval(id);
-  }, [authChecked, tuyaSyncMs]);
-
-  type DisplayNotification = Notification & { count?: number };
-
-  const groupKeyFor = (note: Notification) => {
-    if (note.type === "CLIENT_ERROR") {
-      return `${note.type}|${note.message}`;
-    }
-    return `${note.type}|${note.minerId ?? ""}|${note.action ?? ""}`;
-  };
-
-  const visibleNotifications = [...clientNotifications, ...notifications].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-  const groupedNotifications: DisplayNotification[] = (() => {
-    const map = new Map<string, DisplayNotification>();
-    const output: DisplayNotification[] = [];
-    for (const note of visibleNotifications) {
-      const key = groupKeyFor(note);
-      const shouldGroup = groupNotifications || groupedKeys.includes(key);
-      if (!shouldGroup) {
-        output.push(note);
-        continue;
-      }
-      const existing = map.get(key);
-      if (!existing) {
-        const entry: DisplayNotification = { ...note, count: 1 };
-        map.set(key, entry);
-        output.push(entry);
-      } else {
-        existing.count = (existing.count ?? 1) + 1;
-      }
-    }
-    return output;
-  })();
-  const visibleGroupedNotifications = groupedNotifications.slice(
-    0,
-    Math.max(1, Math.floor(notificationVisibleCount)),
-  );
-  const minerById = new Map(miners.map((m) => [m.minerId, m]));
-
-  const toGh = (value: number | null | undefined): number | null => {
-    if (typeof value !== "number" || !Number.isFinite(value)) return null;
-    return value > 500 ? value / 1000 : value;
-  };
-
-  const restartActionStateForNote = (
-    note: DisplayNotification,
-  ): { enabled: boolean; title?: string } => {
-    if (note.action !== "RESTART" || !note.minerId) {
-      return { enabled: false, title: "Action is not available" };
-    }
-    const miner = minerById.get(note.minerId);
-    if (!miner) {
-      return { enabled: false, title: "Miner is not available" };
-    }
-    if (miner.overheatLocked === true) {
-      return { enabled: false, title: "Overheat lock is active" };
-    }
-    if (pendingActionByMiner[miner.minerId]) {
-      return { enabled: false, title: "Command already requested" };
-    }
-    if (
-      miner.pendingCommandType === CommandType.RESTART ||
-      miner.pendingCommandType === CommandType.SLEEP ||
-      miner.pendingCommandType === CommandType.WAKE
-    ) {
-      return { enabled: false, title: t(uiLang, "command_is_already_pending") };
-    }
-
-    const metric = (miner.lastMetric ?? null) as {
-      online?: boolean;
-      hashrateRealtime?: number;
-      hashrate?: number;
-    } | null;
-    if (!metric || metric.online !== true) {
-      return { enabled: false, title: t(uiLang, "miner_is_offline") };
-    }
-
-    const currentGh = toGh(metric.hashrateRealtime ?? metric.hashrate ?? null);
-    const thresholdGh =
-      typeof miner.lowHashrateThresholdGh === "number" ? miner.lowHashrateThresholdGh : null;
-    if (currentGh === null || thresholdGh === null) {
-      return { enabled: false, title: t(uiLang, "no_hashrate_data") };
-    }
-    if (currentGh >= thresholdGh) {
-      return { enabled: false, title: t(uiLang, "hashrate_is_normal_now") };
-    }
-
-    if (miner.lastRestartAt) {
-      const restartAtMs = new Date(miner.lastRestartAt).getTime();
-      const graceMs = Math.max(miner.postRestartGraceMinutes ?? 10, 0) * 60 * 1000;
-      if (Number.isFinite(restartAtMs) && Date.now() - restartAtMs < graceMs) {
-        return { enabled: false, title: t(uiLang, "post_restart_grace_period_is_active") };
-      }
-    }
-
-    return { enabled: true };
-  };
-
-  const localizeNotificationMessage = (note: Notification): string => {
-    const formatTempC = (raw: string): string => {
-      const num = Number.parseFloat(raw);
-      if (!Number.isFinite(num)) return raw;
-      return Number(num.toFixed(1)).toString();
-    };
-    const message = note.message;
-    const autoRestart = /^Hashrate on (.+) dropped to ([\d.]+) GH\/s\. Auto-restart issued\.$/.exec(message);
-    if (autoRestart) {
-      return t(uiLang, "hashrate_dropped_auto_restart_issued", {
-        minerId: autoRestart[1],
-        hashrate: autoRestart[2],
-      });
-    }
-    const restartPrompt =
-      /^Hashrate on (.+) dropped to ([\d.]+) GH\/s\. Auto-restart is disabled\. Restart now\?$/.exec(
-        message,
-      );
-    if (restartPrompt) {
-      return t(uiLang, "hashrate_dropped_auto_restart_disabled_restart_now", {
-        minerId: restartPrompt[1],
-        hashrate: restartPrompt[2],
-      });
-    }
-    if (note.type === "OVERHEAT_COOLDOWN") {
-      const overheatCooldown =
-        /^Overheat protection on (.+): ([\d.]+)C >= ([\d.]+)C\. SLEEP command issued for (\d+) minutes(?: \(until (.+)\))?\. Then WAKE will be sent automatically\. If power is unavailable at wake time, WAKE will be deferred until power is restored\.$/.exec(
-          message,
-        );
-      if (overheatCooldown) {
-        return t(uiLang, "overheat_cooldown_started_auto_wake", {
-          minerId: overheatCooldown[1],
-          tempC: formatTempC(overheatCooldown[2]),
-          limitC: formatTempC(overheatCooldown[3]),
-          minutes: overheatCooldown[4],
-        });
-      }
-    }
-    if (note.type === "OVERHEAT_WAKE_DEFERRED") {
-      const deferredWake =
-        /^Overheat cooldown finished for (.+), but WAKE is deferred: power is unavailable \(switch OFF or blocked by battery\/grid policy\)\. WAKE will be sent automatically after power is restored\.$/.exec(
-          message,
-        );
-      if (deferredWake) {
-        return t(uiLang, "overheat_wake_deferred_power_unavailable", {
-          minerId: deferredWake[1],
-        });
-      }
-    }
-    if (note.type === "OVERHEAT_WAKE_SENT") {
-      const wakeAfterDeferred =
-        /^Power restored for (.+)\. Deferred WAKE sent after (\d+)-minute overheat cooldown\.$/.exec(
-          message,
-        );
-      if (wakeAfterDeferred) {
-        return t(uiLang, "overheat_wake_sent_after_power_restore", {
-          minerId: wakeAfterDeferred[1],
-        });
-      }
-      const wakeAfterCooldown =
-        /^(\d+)-minute overheat cooldown finished for (.+)\. WAKE command sent automatically\.$/.exec(
-          message,
-        );
-      if (wakeAfterCooldown) {
-        return t(uiLang, "overheat_wake_sent_after_cooldown", {
-          minerId: wakeAfterCooldown[2],
-        });
-      }
-    }
-    const boardDrift = /^Board hashrate drift on (.+): (.+)\.$/.exec(message);
-    if (boardDrift) {
-      return t(uiLang, "board_hashrate_drift_detected", {
-        minerId: boardDrift[1],
-        summary: boardDrift[2],
-      });
-    }
-    const commandSuccess = /^Command (RESTART|SLEEP|WAKE|RELOAD_CONFIG) succeeded on (.+)\.$/.exec(message);
-    if (commandSuccess) {
-      return t(uiLang, "command_succeeded_on_miner", {
-        command: commandSuccess[1],
-        minerId: commandSuccess[2],
-      });
-    }
-    const commandFailed = /^Command (RESTART|SLEEP|WAKE|RELOAD_CONFIG) failed on (.+?)(?:: (.+))?\.$/.exec(message);
-    if (commandFailed) {
-      return t(uiLang, "command_failed_on_miner", {
-        command: commandFailed[1],
-        minerId: commandFailed[2],
-        reason: commandFailed[3] ? `: ${commandFailed[3]}` : "",
-      });
-    }
-    const autoOffCritical = /^Auto OFF requested for (.+): grid is OFF and battery < ([\d.]+)%\.$/.exec(message);
-    if (autoOffCritical) {
-      return t(uiLang, "auto_off_requested_battery_critical", {
-        deviceName: autoOffCritical[1],
-        threshold: autoOffCritical[2],
-      });
-    }
-    const autoOff = /^Auto OFF requested for (.+)\.$/.exec(message);
-    if (autoOff) {
-      return t(uiLang, "auto_off_requested_generic", {
-        deviceName: autoOff[1],
-      });
-    }
-    const autoOffRetry =
-      /^Auto OFF re-requested for (.+): ON conditions are still not met, so auto-shutdown remains active\.$/.exec(
-        message,
-      );
-    if (autoOffRetry) {
-      return t(uiLang, "auto_off_rerequested_conditions_not_met", {
-        deviceName: autoOffRetry[1],
-      });
-    }
-    const autoOnGrid = /^Auto ON requested for (.+) because grid is available\.$/.exec(message);
-    if (autoOnGrid) {
-      return t(uiLang, "auto_on_requested_grid_available", {
-        deviceName: autoOnGrid[1],
-      });
-    }
-    const autoOnDelay = /^Auto ON requested for (.+) after threshold recovery delay\.$/.exec(message);
-    if (autoOnDelay) {
-      return t(uiLang, "auto_on_requested_after_delay", {
-        deviceName: autoOnDelay[1],
-      });
-    }
-    return message;
-  };
-
-  const orderedMiners = [...miners].sort((a, b) => {
-    const ai = minerOrder.indexOf(a.minerId);
-    const bi = minerOrder.indexOf(b.minerId);
-    const av = ai >= 0 ? ai : Number.MAX_SAFE_INTEGER;
-    const bv = bi >= 0 ? bi : Number.MAX_SAFE_INTEGER;
-    return av - bv;
-  });
-  const hasCurrentDeyeStation =
-    typeof deyeStation?.stationId === "number" && Number.isFinite(deyeStation.stationId);
-  const currentDeyeStationAutomatIds =
-    hasCurrentDeyeStation
-      ? deyeAutomatsByStation[String(Math.trunc(deyeStation.stationId))] ?? EMPTY_DEVICE_IDS
-      : EMPTY_DEVICE_IDS;
-  const currentDeyeStationAutomatSet = new Set(currentDeyeStationAutomatIds);
-  const shouldRestrictAutomatsByStation = deyeAutomatsLoaded && hasCurrentDeyeStation;
-  const deyeStationByDeviceId = Object.entries(deyeAutomatsByStation).reduce<Record<string, string>>(
-    (acc, [stationId, deviceIds]) => {
-      for (const deviceId of deviceIds) {
-        if (!deviceId || typeof deviceId !== "string") continue;
-        acc[deviceId] = stationId;
-      }
-      return acc;
-    },
-    {},
-  );
-  const stationTuyaDevices = shouldRestrictAutomatsByStation
-    ? (tuyaData?.devices ?? []).filter((d) => currentDeyeStationAutomatSet.has(d.id))
-    : (tuyaData?.devices ?? []);
-  const deviceById = new Map(stationTuyaDevices.map((d) => [d.id, d]));
-  const validTuyaBindingByMiner = shouldRestrictAutomatsByStation
-    ? Object.entries(tuyaBindingByMiner).reduce<Record<string, string>>((acc, [minerId, deviceId]) => {
-        const normalized = typeof deviceId === "string" ? deviceId.trim() : "";
-        if (!normalized || !currentDeyeStationAutomatSet.has(normalized)) return acc;
-        acc[minerId] = normalized;
-        return acc;
-      }, {})
-    : tuyaBindingByMiner;
-  const deviceToMiner = new Map<string, string>();
-  for (const [minerId, deviceId] of Object.entries(validTuyaBindingByMiner)) {
-    if (deviceId) deviceToMiner.set(deviceId, minerId);
-  }
-
-  useEffect(() => {
-    const all = [...clientNotifications, ...notifications];
+    const all = [...clientNotifications, ...minerSync.notifications];
     if (all.length === 0) return;
     const now = Date.now();
     for (const note of all) {
@@ -1646,35 +800,32 @@ export function useHomeController() {
       if (!ok && !failed) continue;
       const createdAtMs = new Date(note.createdAt).getTime();
       if (!Number.isFinite(createdAtMs)) continue;
-      // Ignore old command result notifications on reload to prevent stale spinners.
+      // Ignore old results on reload to prevent stale spinners.
       if (now - createdAtMs > CONTROL_ACTION_LOCK_MS) continue;
 
       if (ok && sleepCmd) {
-        setMinerControlStates((prev) => ({
+        minerSync.setMinerControlStates((prev) => ({
           ...prev,
           [note.minerId!]: { phase: MinerControlPhase.SLEEPING, since: createdAtMs },
         }));
         continue;
       }
-
       if (ok && wakeCmd) {
-        setMinerControlStates((prev) => ({
+        minerSync.setMinerControlStates((prev) => ({
           ...prev,
           [note.minerId!]: { phase: MinerControlPhase.WARMING_UP, since: createdAtMs, source: "WAKE" },
         }));
         continue;
       }
-
       if (ok && restartCmd) {
-        setMinerControlStates((prev) => ({
+        minerSync.setMinerControlStates((prev) => ({
           ...prev,
           [note.minerId!]: { phase: MinerControlPhase.WARMING_UP, since: createdAtMs, source: "RESTART" },
         }));
         continue;
       }
-
       if (failed && (sleepCmd || wakeCmd || restartCmd)) {
-        setMinerControlStates((prev) => {
+        minerSync.setMinerControlStates((prev) => {
           if (!prev[note.minerId!]) return prev;
           const next = { ...prev };
           delete next[note.minerId!];
@@ -1682,21 +833,26 @@ export function useHomeController() {
         });
       }
     }
-  }, [notifications, clientNotifications]);
-  const hasAnyBinding = Object.keys(validTuyaBindingByMiner).length > 0;
-  const visibleTuyaDevices = stationTuyaDevices.filter(
-    (d) => !hideUnboundAutomats || !hasAnyBinding || deviceToMiner.has(d.id),
-  );
-  const automatsTodayConsumptionKwh = stationTuyaDevices.reduce((sum, device) => {
-    const value = device.energyTodayKwh;
-    return typeof value === "number" && Number.isFinite(value) ? sum + value : sum;
-  }, 0);
+  }, [minerSync.notifications, clientNotifications]);
+
+  // ─── Deye/Tuya station binding cleanup ───────────────────────────────────────
+
+  const { deyeStation, deyeAutomatsByStation, deyeAutomatsLoaded } = deyeSync;
+
+  const hasCurrentDeyeStation =
+    typeof deyeStation?.stationId === "number" && Number.isFinite(deyeStation.stationId);
+  const currentDeyeStationAutomatIds = hasCurrentDeyeStation
+    ? (deyeAutomatsByStation[String(Math.trunc(deyeStation.stationId))] ?? EMPTY_DEVICE_IDS)
+    : EMPTY_DEVICE_IDS;
+  const currentDeyeStationAutomatSet = new Set(currentDeyeStationAutomatIds);
+  const shouldRestrictAutomatsByStation = deyeAutomatsLoaded && hasCurrentDeyeStation;
 
   useEffect(() => {
     if (!deyeAutomatsLoaded) return;
-    if (typeof deyeStation?.stationId !== "number" || !Number.isFinite(deyeStation.stationId)) return;
+    if (typeof deyeStation?.stationId !== "number" || !Number.isFinite(deyeStation.stationId))
+      return;
     const stationAutomatSet = new Set(currentDeyeStationAutomatIds);
-    const invalidMinerIds = Object.entries(tuyaBindingByMiner)
+    const invalidMinerIds = Object.entries(minerSync.tuyaBindingByMiner)
       .filter(([, deviceId]) => {
         const normalized = typeof deviceId === "string" ? deviceId.trim() : "";
         return normalized.length > 0 && !stationAutomatSet.has(normalized);
@@ -1704,7 +860,7 @@ export function useHomeController() {
       .map(([minerId]) => minerId);
     if (invalidMinerIds.length === 0) return;
 
-    setTuyaBindingByMiner((prev) => {
+    minerSync.setTuyaBindingByMiner((prev) => {
       const next: Record<string, string> = {};
       for (const [minerId, deviceId] of Object.entries(prev)) {
         const normalized = typeof deviceId === "string" ? deviceId.trim() : "";
@@ -1734,40 +890,140 @@ export function useHomeController() {
       }
     };
     void syncInvalidBindings();
-  }, [
-    deyeAutomatsLoaded,
-    deyeStation?.stationId,
-    currentDeyeStationAutomatIds,
-    tuyaBindingByMiner,
-  ]);
+  }, [deyeAutomatsLoaded, deyeStation?.stationId, currentDeyeStationAutomatIds, minerSync.tuyaBindingByMiner]);
 
-  const bindAutomatToCurrentDeyeStation = async (deviceId: string) => {
-    if (typeof deyeStation?.stationId !== "number" || !Number.isFinite(deyeStation.stationId)) {
-      pushClientNotification("Deye station is not available.");
-      return;
-    }
-    await saveDeyeStationAutomatBinding(deyeStation.stationId, deviceId, true);
-  };
+  // ─── Display computed values ──────────────────────────────────────────────────
 
-  const unbindAutomatFromCurrentDeyeStation = async (deviceId: string) => {
-    if (typeof deyeStation?.stationId !== "number" || !Number.isFinite(deyeStation.stationId)) {
-      pushClientNotification("Deye station is not available.");
-      return;
+  type DisplayNotification = Notification & { count?: number };
+
+  const visibleNotifications = [...clientNotifications, ...minerSync.notifications].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+  const groupedNotifications: DisplayNotification[] = (() => {
+    const map = new Map<string, DisplayNotification>();
+    const output: DisplayNotification[] = [];
+    for (const note of visibleNotifications) {
+      const key = groupKeyFor(note);
+      const shouldGroup = groupNotifications || groupedKeys.includes(key);
+      if (!shouldGroup) {
+        output.push(note);
+        continue;
+      }
+      const existing = map.get(key);
+      if (!existing) {
+        const entry: DisplayNotification = { ...note, count: 1 };
+        map.set(key, entry);
+        output.push(entry);
+      } else {
+        existing.count = (existing.count ?? 1) + 1;
+      }
     }
-    await saveDeyeStationAutomatBinding(deyeStation.stationId, deviceId, false);
+    return output;
+  })();
+  const visibleGroupedNotifications = groupedNotifications.slice(
+    0,
+    Math.max(1, Math.floor(notificationVisibleCount)),
+  );
+
+  const deyeStationByDeviceId = Object.entries(deyeAutomatsByStation).reduce<Record<string, string>>(
+    (acc, [stationId, deviceIds]) => {
+      for (const deviceId of deviceIds) {
+        if (!deviceId || typeof deviceId !== "string") continue;
+        acc[deviceId] = stationId;
+      }
+      return acc;
+    },
+    {},
+  );
+
+  const stationTuyaDevices = shouldRestrictAutomatsByStation
+    ? (tuyaSync.tuyaData?.devices ?? []).filter((d) => currentDeyeStationAutomatSet.has(d.id))
+    : (tuyaSync.tuyaData?.devices ?? []);
+  const deviceById = new Map(stationTuyaDevices.map((d) => [d.id, d]));
+  const validTuyaBindingByMiner = shouldRestrictAutomatsByStation
+    ? Object.entries(minerSync.tuyaBindingByMiner).reduce<Record<string, string>>(
+        (acc, [minerId, deviceId]) => {
+          const normalized = typeof deviceId === "string" ? deviceId.trim() : "";
+          if (!normalized || !currentDeyeStationAutomatSet.has(normalized)) return acc;
+          acc[minerId] = normalized;
+          return acc;
+        },
+        {},
+      )
+    : minerSync.tuyaBindingByMiner;
+  const deviceToMiner = new Map<string, string>();
+  for (const [minerId, deviceId] of Object.entries(validTuyaBindingByMiner)) {
+    if (deviceId) deviceToMiner.set(deviceId, minerId);
+  }
+  const hasAnyBinding = Object.keys(validTuyaBindingByMiner).length > 0;
+  const visibleTuyaDevices = stationTuyaDevices.filter(
+    (d) => !hideUnboundAutomats || !hasAnyBinding || deviceToMiner.has(d.id),
+  );
+  const automatsTodayConsumptionKwh = stationTuyaDevices.reduce((sum, device) => {
+    const value = device.energyTodayKwh;
+    return typeof value === "number" && Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+
+  const minerById = new Map(minerSync.miners.map((m) => [m.minerId, m]));
+  const orderedMiners = [...minerSync.miners].sort((a, b) => {
+    const ai = minerOrder.indexOf(a.minerId);
+    const bi = minerOrder.indexOf(b.minerId);
+    const av = ai >= 0 ? ai : Number.MAX_SAFE_INTEGER;
+    const bv = bi >= 0 ? bi : Number.MAX_SAFE_INTEGER;
+    return av - bv;
+  });
+
+  const batteryStatusText = (deyeStation?.batteryStatus ?? "").toLowerCase();
+  const batteryMode = batteryStatusText.includes("discharg")
+    ? "discharging"
+    : batteryStatusText.includes("charg")
+      ? "charging"
+      : batteryStatusText.includes("idle")
+        ? "idle"
+        : "unknown";
+  const batteryModeLabel =
+    batteryMode === "charging"
+      ? t(uiLang, "charging")
+      : batteryMode === "discharging"
+        ? t(uiLang, "discharging")
+        : batteryMode === "idle"
+          ? t(uiLang, "idle")
+          : deyeStation?.batteryStatus ?? "";
+  const kwUnit = t(uiLang, "kw");
+  const batteryColor =
+    batteryMode === "charging"
+      ? "#60a5fa"
+      : batteryMode === "discharging"
+        ? "#ef4444"
+        : typeof deyeStation?.batterySoc === "number" && deyeStation.batterySoc >= 99
+          ? "#60a5fa"
+          : "#64748b";
+  const batteryFill =
+    typeof deyeStation?.batterySoc === "number"
+      ? Math.max(6, Math.min(100, deyeStation.batterySoc))
+      : 0;
+
+  // ─── UI helpers ───────────────────────────────────────────────────────────────
+
+  const [editingAliasFor, setEditingAliasFor] = useState<string | null>(null);
+  const [aliasDraft, setAliasDraft] = useState("");
+
+  const formatUpdatedAt = (iso?: string | null) => {
+    if (!iso) return t(uiLang, "no_data");
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return iso;
+    return date.toLocaleTimeString([], { hour12: false });
   };
 
   const reorderCard = (draggedId: string, targetId: string) => {
     if (!draggedId || !targetId || draggedId === targetId) return;
     setMinerOrder((prev) => {
-      const base = prev.length > 0 ? [...prev] : miners.map((m) => m.minerId);
+      const base = prev.length > 0 ? [...prev] : minerSync.miners.map((m) => m.minerId);
       if (!base.includes(draggedId)) base.push(draggedId);
       if (!base.includes(targetId)) base.push(targetId);
-
       const from = base.indexOf(draggedId);
       const to = base.indexOf(targetId);
       if (from < 0 || to < 0 || from === to) return base;
-
       const [item] = base.splice(from, 1);
       base.splice(to, 0, item);
       return base;
@@ -1777,12 +1033,10 @@ export function useHomeController() {
   const reorderCardToIndex = (draggedId: string, targetIndex: number) => {
     if (!draggedId || !Number.isFinite(targetIndex)) return;
     setMinerOrder((prev) => {
-      const base = prev.length > 0 ? [...prev] : miners.map((m) => m.minerId);
+      const base = prev.length > 0 ? [...prev] : minerSync.miners.map((m) => m.minerId);
       if (!base.includes(draggedId)) base.push(draggedId);
-
       const from = base.indexOf(draggedId);
       if (from < 0) return base;
-
       const [item] = base.splice(from, 1);
       const safeIndex = Math.max(0, Math.min(base.length, Math.floor(targetIndex)));
       base.splice(safeIndex, 0, item);
@@ -1815,78 +1069,6 @@ export function useHomeController() {
     setAliasDraft("");
   };
 
-  const formatRuntime = (seconds?: number) => {
-    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) {
-      return "-";
-    }
-    const d = Math.floor(seconds / 86400);
-    const h = Math.floor((seconds % 86400) / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    const parts: string[] = [];
-    if (d > 0) parts.push(`${d}d`);
-    if (h > 0) parts.push(`${h}h`);
-    if (m > 0) parts.push(`${m}m`);
-    // Show seconds only before first full day of uptime.
-    if (d === 0 && s > 0) parts.push(`${s}s`);
-    return parts.length > 0 ? parts.join(" ") : "0s";
-  };
-
-  const formatLastSeen = (iso: string | null) => {
-    if (!iso) return "-";
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return iso;
-    const now = new Date();
-    const sameDay =
-      now.getFullYear() === date.getFullYear() &&
-      now.getMonth() === date.getMonth() &&
-      now.getDate() === date.getDate();
-    if (sameDay) {
-      return date.toLocaleTimeString([], { hour12: false });
-    }
-    return date.toLocaleString();
-  };
-
-  const formatUpdatedAt = (iso?: string | null) => {
-    if (!iso) return t(uiLang, "no_data");
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return iso;
-    return date.toLocaleTimeString([], { hour12: false });
-  };
-
-  const batteryStatusText = (deyeStation?.batteryStatus ?? "").toLowerCase();
-  const batteryMode =
-    batteryStatusText.includes("discharg")
-      ? "discharging"
-      : batteryStatusText.includes("charg")
-        ? "charging"
-        : batteryStatusText.includes("idle")
-          ? "idle"
-          : "unknown";
-  const batteryModeLabel =
-    batteryMode === "charging"
-      ? t(uiLang, "charging")
-      : batteryMode === "discharging"
-        ? t(uiLang, "discharging")
-        : batteryMode === "idle"
-          ? t(uiLang, "idle")
-          : deyeStation?.batteryStatus ?? "";
-  const kwUnit = t(uiLang, "kw");
-  const batteryColor =
-    batteryMode === "charging"
-      ? "#60a5fa"
-      : batteryMode === "discharging"
-        ? "#ef4444"
-        : typeof deyeStation?.batterySoc === "number" && deyeStation.batterySoc >= 99
-          ? "#60a5fa"
-          : "#64748b";
-  const batteryFill =
-    typeof deyeStation?.batterySoc === "number"
-      ? Math.max(6, Math.min(100, deyeStation.batterySoc))
-      : 0;
-  const onText = t(uiLang, "on");
-  const offText = t(uiLang, "off");
-
   const setLanguage = (lang: UiLang) => {
     setUiLang(lang);
     writeUiLang(lang);
@@ -1902,34 +1084,36 @@ export function useHomeController() {
     router.replace("/auth");
   };
 
+  // ─── Return ───────────────────────────────────────────────────────────────────
+
   return {
     authChecked,
     uiLang,
     setLanguage,
-    loading,
-    reloadPending,
-    miners,
+    loading: minerSync.loading,
+    reloadPending: minerSync.reloadPending,
+    miners: minerSync.miners,
     openGeneralSettings,
     refreshAll,
     reloadConfig,
     logout,
     deyeStation,
-    deyeLoading,
+    deyeLoading: deyeSync.deyeLoading,
     deyeCollapsed,
     setDeyeCollapsed,
     currentDeyeStationAutomatIds,
     deyeStationByDeviceId,
-    deyeAutomatsSaving,
-    bindAutomatToCurrentDeyeStation,
-    unbindAutomatFromCurrentDeyeStation,
+    deyeAutomatsSaving: deyeSync.deyeAutomatsSaving,
+    bindAutomatToCurrentDeyeStation: deyeSync.bindAutomatToCurrentDeyeStation,
+    unbindAutomatFromCurrentDeyeStation: deyeSync.unbindAutomatFromCurrentDeyeStation,
     batteryMode,
     batteryModeLabel,
     batteryColor,
     batteryFill,
     kwUnit,
     formatUpdatedAt,
-    tuyaData,
-    tuyaLoading,
+    tuyaData: tuyaSync.tuyaData,
+    tuyaLoading: tuyaSync.tuyaLoading,
     tuyaCollapsed,
     setTuyaCollapsed,
     hideUnboundAutomats,
@@ -1937,28 +1121,29 @@ export function useHomeController() {
     visibleTuyaDevices,
     automatsTodayConsumptionKwh,
     deviceToMiner,
-    tuyaBindingByMiner,
-    pendingTuyaByDevice,
+    tuyaBindingByMiner: minerSync.tuyaBindingByMiner,
+    pendingTuyaByDevice: tuyaSync.pendingTuyaByDevice,
     orderedMiners,
     minerAliases,
-    onText,
-    offText,
+    onText: t(uiLang, "on"),
+    offText: t(uiLang, "off"),
     saveTuyaBinding,
     requestTuyaSwitchConfirm,
     minerOrder,
     minerGridRef,
-    minerControlStates,
-    pendingActionByMiner,
+    minerControlStates: minerSync.minerControlStates,
+    pendingActionByMiner: minerSync.pendingActionByMiner,
     deviceById,
     statusBadgesVertical,
-    boardCountByMiner,
+    boardCountByMiner: minerSync.boardCountByMiner,
     editingAliasFor,
     aliasDraft,
     setAliasDraft,
     lowHashrateRestartGraceMs: LOW_HASHRATE_RESTART_GRACE_MS,
     formatRuntime,
     formatLastSeen,
-    isHashrateReady,
+    toGh,
+    isHashrateReady: minerSync.isHashrateReady,
     openMinerSettings,
     reorderCard,
     reorderCardToIndex,
@@ -1971,8 +1156,10 @@ export function useHomeController() {
     setNotificationsCollapsed,
     groupedNotifications,
     visibleGroupedNotifications,
-    localizeNotificationMessage,
-    restartActionStateForNote,
+    localizeNotificationMessage: (note: Notification) =>
+      localizeNotificationMessage(uiLang, note),
+    restartActionStateForNote: (note: Notification) =>
+      restartActionStateForNote(note, minerById, minerSync.pendingActionByMiner, uiLang),
     pendingConfirmAction,
     setPendingConfirmAction,
     runConfirmedAction,

@@ -66,12 +66,7 @@ function resolveBoardHashrateDrifts(body: MinerMetric): BoardDrift[] {
     }
     const driftPercent = (Math.abs(realVal - idealVal) / idealVal) * 100;
     if (driftPercent >= BOARD_HASHRATE_DRIFT_PERCENT) {
-      drifts.push({
-        board: i + 1,
-        realGh: realVal,
-        idealGh: idealVal,
-        driftPercent,
-      });
+      drifts.push({ board: i + 1, realGh: realVal, idealGh: idealVal, driftPercent });
     }
   }
   return drifts;
@@ -79,7 +74,10 @@ function resolveBoardHashrateDrifts(body: MinerMetric): BoardDrift[] {
 
 function formatBoardDriftMessage(minerId: string, drifts: BoardDrift[]): string {
   const summary = drifts
-    .map((d) => `B${d.board}: ${d.realGh.toFixed(2)}/${d.idealGh.toFixed(2)} GH/s (${d.driftPercent.toFixed(1)}%)`)
+    .map(
+      (d) =>
+        `B${d.board}: ${d.realGh.toFixed(2)}/${d.idealGh.toFixed(2)} GH/s (${d.driftPercent.toFixed(1)}%)`,
+    )
     .join("; ");
   return `Board hashrate drift on ${minerId}: ${summary}.`;
 }
@@ -137,13 +135,253 @@ function computeDecisions(
   const restartReady =
     !config.lastRestartAt || nowMs - config.lastRestartAt.getTime() >= postRestartGraceMs;
   const promptReady =
-    !config.lastLowHashrateAt || nowMs - config.lastLowHashrateAt.getTime() >= promptCooldownMs;
+    !config.lastLowHashrateAt ||
+    nowMs - config.lastLowHashrateAt.getTime() >= promptCooldownMs;
   return {
     hashrateGh, maxTempC, boardDrifts, overheatThreshold, overheatSleepMinutes,
     overheatTriggered, wasOverheatLocked, isOverheatLocked,
     isLowHashrate, restartReady, promptReady, boardDriftReady: restartReady,
   };
 }
+
+// ─── DB write helpers ─────────────────────────────────────────────────────────
+
+type DbSettings = {
+  notifyAutoRestart: boolean;
+  notifyRestartPrompt: boolean;
+  autoRestartEnabled: boolean;
+};
+
+async function applyDecisionsToDb(
+  minerId: string,
+  d: MetricDecisions,
+  isOnline: boolean | null,
+  upserted: { autoRestartEnabled: boolean; overheatLockedAt: Date | null },
+  settings: DbSettings,
+  now: Date,
+): Promise<void> {
+  if (d.isOverheatLocked !== d.wasOverheatLocked || typeof d.maxTempC === "number") {
+    await prisma.miner.update({
+      where: { id: minerId },
+      data: {
+        overheatLocked: d.isOverheatLocked,
+        overheatLockedAt:
+          d.overheatTriggered && !d.wasOverheatLocked ? now : upserted.overheatLockedAt ?? null,
+        overheatLastTempC: typeof d.maxTempC === "number" ? d.maxTempC : undefined,
+      },
+    });
+  }
+
+  if (d.overheatTriggered && !d.wasOverheatLocked) {
+    const pendingSleep = await prisma.command.findFirst({
+      where: { minerId, type: CommandType.SLEEP, status: CommandStatus.PENDING },
+    });
+    if (!pendingSleep) {
+      await prisma.command.create({
+        data: {
+          id: crypto.randomUUID(),
+          minerId,
+          type: CommandType.SLEEP,
+          status: CommandStatus.PENDING,
+          createdAt: now,
+        },
+      });
+    }
+    const wakeAt = new Date(now.getTime() + d.overheatSleepMinutes * 60 * 1000);
+    await prisma.notification.create({
+      data: {
+        type: NOTIFY_OVERHEAT_COOLDOWN,
+        minerId,
+        action: null,
+        message:
+          `Overheat protection on ${minerId}: ${d.maxTempC?.toFixed(1)}C >= ${d.overheatThreshold.toFixed(1)}C. ` +
+          `SLEEP command issued for ${d.overheatSleepMinutes} minutes (until ${wakeAt.toISOString()}). ` +
+          `Then WAKE will be sent automatically. If power is unavailable at wake time, WAKE will be deferred until power is restored.`,
+      },
+    });
+  }
+
+  if (d.isLowHashrate && !d.isOverheatLocked) {
+    if (settings.autoRestartEnabled && !AUTO_RESTART_TEMP_DISABLED && d.restartReady) {
+      const pendingRestart = await prisma.command.findFirst({
+        where: { minerId, type: CommandType.RESTART, status: CommandStatus.PENDING },
+      });
+      if (!pendingRestart) {
+        await prisma.command.create({
+          data: {
+            id: crypto.randomUUID(),
+            minerId,
+            type: CommandType.RESTART,
+            status: CommandStatus.PENDING,
+            createdAt: now,
+          },
+        });
+        await prisma.miner.update({ where: { id: minerId }, data: { lastRestartAt: now } });
+        if (settings.notifyAutoRestart) {
+          await prisma.notification.create({
+            data: {
+              type: NOTIFY_AUTO_RESTART,
+              minerId,
+              action: null,
+              message: `Hashrate on ${minerId} dropped to ${d.hashrateGh?.toFixed(2)} GH/s. Auto-restart issued.`,
+            },
+          });
+        }
+      }
+    } else if (!settings.autoRestartEnabled && settings.notifyRestartPrompt && d.promptReady) {
+      await prisma.notification.create({
+        data: {
+          type: NOTIFY_RESTART_PROMPT,
+          minerId,
+          action: CommandType.RESTART,
+          message: `Hashrate on ${minerId} dropped to ${d.hashrateGh?.toFixed(2)} GH/s. Auto-restart is disabled. Restart now?`,
+        },
+      });
+      await prisma.miner.update({ where: { id: minerId }, data: { lastLowHashrateAt: now } });
+    }
+  }
+
+  if (isOnline === true && d.boardDrifts.length > 0 && d.boardDriftReady) {
+    const recentBoardDrift = await prisma.notification.findFirst({
+      where: { minerId, type: NOTIFY_BOARD_HASHRATE_DRIFT },
+      orderBy: { createdAt: "desc" },
+    });
+    const cooldownPassed =
+      !recentBoardDrift ||
+      now.getTime() - recentBoardDrift.createdAt.getTime() >= BOARD_HASHRATE_DRIFT_NOTIFY_COOLDOWN_MS;
+    if (cooldownPassed) {
+      await prisma.notification.create({
+        data: {
+          type: NOTIFY_BOARD_HASHRATE_DRIFT,
+          minerId,
+          action: CommandType.RESTART,
+          message: formatBoardDriftMessage(minerId, d.boardDrifts),
+        },
+      });
+    }
+  }
+}
+
+// ─── Memory (fallback) write helpers ─────────────────────────────────────────
+
+type MemorySettings = {
+  notifyAutoRestart: boolean;
+  notifyRestartPrompt: boolean;
+  autoRestartEnabled: boolean;
+};
+
+function applyDecisionsToMemory(
+  minerId: string,
+  d: MetricDecisions,
+  settings: MemorySettings,
+  nowIso: string,
+  now: Date,
+): void {
+  const miner = minerStates.get(minerId);
+  if (miner) {
+    miner.overheatLocked = d.isOverheatLocked;
+    if (d.overheatTriggered && !d.wasOverheatLocked) {
+      miner.overheatLockedAt = nowIso;
+    }
+    if (typeof d.maxTempC === "number") {
+      miner.overheatLastTempC = d.maxTempC;
+    }
+    minerStates.set(minerId, miner);
+  }
+
+  if (d.overheatTriggered && !d.wasOverheatLocked) {
+    const hasPendingSleep = commands.some(
+      (c) => c.minerId === minerId && c.type === CommandType.SLEEP && c.status === CommandStatus.PENDING,
+    );
+    if (!hasPendingSleep) {
+      commands.push({
+        id: crypto.randomUUID(),
+        minerId,
+        type: CommandType.SLEEP,
+        status: CommandStatus.PENDING,
+        createdAt: nowIso,
+      });
+    }
+    notifications.unshift({
+      id: crypto.randomUUID(),
+      type: NOTIFY_OVERHEAT_COOLDOWN,
+      message:
+        `Overheat protection on ${minerId}: ${d.maxTempC?.toFixed(1)}C >= ${d.overheatThreshold.toFixed(1)}C. ` +
+        `SLEEP command issued for ${d.overheatSleepMinutes} minutes. Then WAKE will be sent automatically. ` +
+        `If power is unavailable at wake time, WAKE will be deferred until power is restored.`,
+      minerId,
+      createdAt: nowIso,
+    });
+  }
+
+  if (d.isLowHashrate && !d.isOverheatLocked) {
+    if (settings.autoRestartEnabled && !AUTO_RESTART_TEMP_DISABLED && d.restartReady) {
+      const hasPending = commands.some(
+        (c) =>
+          c.minerId === minerId &&
+          c.type === CommandType.RESTART &&
+          c.status === CommandStatus.PENDING,
+      );
+      if (!hasPending) {
+        commands.push({
+          id: crypto.randomUUID(),
+          minerId,
+          type: CommandType.RESTART,
+          status: CommandStatus.PENDING,
+          createdAt: nowIso,
+        });
+        const m = minerStates.get(minerId);
+        if (m) m.lastRestartAt = nowIso;
+        if (settings.notifyAutoRestart) {
+          notifications.unshift({
+            id: crypto.randomUUID(),
+            type: NOTIFY_AUTO_RESTART,
+            message: `Hashrate on ${minerId} dropped to ${d.hashrateGh?.toFixed(2)} GH/s. Auto-restart issued.`,
+            minerId,
+            createdAt: nowIso,
+          });
+        }
+      }
+    } else if (!settings.autoRestartEnabled && settings.notifyRestartPrompt && d.promptReady) {
+      notifications.unshift({
+        id: crypto.randomUUID(),
+        type: NOTIFY_RESTART_PROMPT,
+        message: `Hashrate on ${minerId} dropped to ${d.hashrateGh?.toFixed(2)} GH/s. Auto-restart is disabled. Restart now?`,
+        minerId,
+        action: CommandType.RESTART,
+        createdAt: nowIso,
+      });
+      const m = minerStates.get(minerId);
+      if (m) m.lastLowHashrateAt = nowIso;
+    }
+  }
+
+  if (d.boardDrifts.length > 0 && d.boardDriftReady) {
+    const recentBoardDrift = notifications.find(
+      (n) => n.minerId === minerId && n.type === NOTIFY_BOARD_HASHRATE_DRIFT,
+    );
+    const cooldownPassed =
+      !recentBoardDrift ||
+      now.getTime() - new Date(recentBoardDrift.createdAt).getTime() >=
+        BOARD_HASHRATE_DRIFT_NOTIFY_COOLDOWN_MS;
+    if (cooldownPassed) {
+      notifications.unshift({
+        id: crypto.randomUUID(),
+        type: NOTIFY_BOARD_HASHRATE_DRIFT,
+        message: formatBoardDriftMessage(minerId, d.boardDrifts),
+        minerId,
+        action: CommandType.RESTART,
+        createdAt: nowIso,
+      });
+    }
+  }
+
+  if (notifications.length > 100) {
+    notifications.length = 100;
+  }
+}
+
+// ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
   const auth = requireAgentAuth(request);
@@ -162,17 +400,15 @@ export async function POST(request: NextRequest) {
   }
 
   const now = new Date();
+  const nowIso = now.toISOString();
   const minerId = body.minerId;
   const settings = await getSettings();
+
   try {
     const existing = await prisma.miner.findUnique({ where: { id: minerId } });
     const wasOnline = existing?.online ?? null;
     const isOnline = body.online ?? null;
-
-    let lastOnlineAt = existing?.lastOnlineAt ?? null;
-    if (isOnline === true && wasOnline !== true) {
-      lastOnlineAt = now;
-    }
+    const lastOnlineAt = isOnline === true && wasOnline !== true ? now : (existing?.lastOnlineAt ?? null);
 
     const upserted = await prisma.miner.upsert({
       where: { id: minerId },
@@ -195,8 +431,7 @@ export async function POST(request: NextRequest) {
         asicType: body.asicType ?? existing?.asicType ?? null,
         firmware: body.firmware ?? existing?.firmware ?? null,
         authType: body.authType ?? existing?.authType ?? null,
-        expectedHashrate:
-          body.expectedHashrate ?? existing?.expectedHashrate ?? null,
+        expectedHashrate: body.expectedHashrate ?? existing?.expectedHashrate ?? null,
         lastSeen: now,
         online: isOnline ?? existing?.online ?? null,
         readStatus: body.readStatus ?? existing?.readStatus ?? null,
@@ -206,10 +441,10 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    const { hashrateGh, maxTempC, boardDrifts, overheatThreshold, overheatSleepMinutes,
-      overheatTriggered, wasOverheatLocked, isOverheatLocked,
-      isLowHashrate, restartReady, promptReady, boardDriftReady } =
-      computeDecisions(body, isOnline, {
+    const decisions = computeDecisions(
+      body,
+      isOnline,
+      {
         lowHashrateThresholdGh: upserted.lowHashrateThresholdGh ?? 10,
         postRestartGraceMinutes: upserted.postRestartGraceMinutes ?? 10,
         overheatProtectionEnabled: upserted.overheatProtectionEnabled === true,
@@ -218,129 +453,34 @@ export async function POST(request: NextRequest) {
         overheatLocked: upserted.overheatLocked === true,
         lastRestartAt: upserted.lastRestartAt ?? null,
         lastLowHashrateAt: upserted.lastLowHashrateAt ?? null,
-      }, settings, now);
-    if (isOverheatLocked !== wasOverheatLocked || typeof maxTempC === "number") {
-      await prisma.miner.update({
-        where: { id: minerId },
-        data: {
-          overheatLocked: isOverheatLocked,
-          overheatLockedAt:
-            overheatTriggered && !wasOverheatLocked ? now : upserted.overheatLockedAt ?? null,
-          overheatLastTempC: typeof maxTempC === "number" ? maxTempC : upserted.overheatLastTempC,
-        },
-      });
-    }
-    if (overheatTriggered && !wasOverheatLocked) {
-      const pendingSleep = await prisma.command.findFirst({
-        where: { minerId, type: CommandType.SLEEP, status: CommandStatus.PENDING },
-      });
-      if (!pendingSleep) {
-        await prisma.command.create({
-          data: {
-            id: crypto.randomUUID(),
-            minerId,
-            type: CommandType.SLEEP,
-            status: CommandStatus.PENDING,
-            createdAt: now,
-          },
-        });
-      }
-      const wakeAt = new Date(now.getTime() + overheatSleepMinutes * 60 * 1000);
-      await prisma.notification.create({
-        data: {
-          type: NOTIFY_OVERHEAT_COOLDOWN,
-          minerId,
-          action: null,
-          message:
-            `Overheat protection on ${minerId}: ${maxTempC?.toFixed(1)}C >= ${overheatThreshold.toFixed(1)}C. ` +
-            `SLEEP command issued for ${overheatSleepMinutes} minutes (until ${wakeAt.toISOString()}). ` +
-            `Then WAKE will be sent automatically. If power is unavailable at wake time, WAKE will be deferred until power is restored.`,
-        },
-      });
-    }
+      },
+      settings,
+      now,
+    );
 
-    if (isLowHashrate && !isOverheatLocked) {
-      if (upserted.autoRestartEnabled && !AUTO_RESTART_TEMP_DISABLED) {
-        if (restartReady) {
-          const pendingRestart = await prisma.command.findFirst({
-            where: { minerId, type: CommandType.RESTART, status: CommandStatus.PENDING },
-          });
-          if (!pendingRestart) {
-            await prisma.command.create({
-              data: {
-                id: crypto.randomUUID(),
-                minerId,
-                type: CommandType.RESTART,
-                status: CommandStatus.PENDING,
-                createdAt: now,
-              },
-            });
-            await prisma.miner.update({
-              where: { id: minerId },
-              data: { lastRestartAt: now },
-            });
-
-            if (settings.notifyAutoRestart) {
-              await prisma.notification.create({
-                data: {
-                  type: NOTIFY_AUTO_RESTART,
-                  minerId,
-                  action: null,
-                  message: `Hashrate on ${minerId} dropped to ${hashrateGh?.toFixed(2)} GH/s. Auto-restart issued.`,
-                },
-              });
-            }
-          }
-        }
-      } else if (!upserted.autoRestartEnabled && settings.notifyRestartPrompt) {
-        if (promptReady) {
-          await prisma.notification.create({
-            data: {
-              type: NOTIFY_RESTART_PROMPT,
-              minerId,
-              action: CommandType.RESTART,
-              message: `Hashrate on ${minerId} dropped to ${hashrateGh?.toFixed(2)} GH/s. Auto-restart is disabled. Restart now?`,
-            },
-          });
-          await prisma.miner.update({
-            where: { id: minerId },
-            data: { lastLowHashrateAt: now },
-          });
-        }
-      }
-    }
-
-    if (isOnline === true && boardDrifts.length > 0) {
-      if (boardDriftReady) {
-        const recentBoardDrift = await prisma.notification.findFirst({
-          where: { minerId, type: NOTIFY_BOARD_HASHRATE_DRIFT },
-          orderBy: { createdAt: "desc" },
-        });
-        const cooldownPassed =
-          !recentBoardDrift ||
-          now.getTime() - recentBoardDrift.createdAt.getTime() >= BOARD_HASHRATE_DRIFT_NOTIFY_COOLDOWN_MS;
-        if (cooldownPassed) {
-          await prisma.notification.create({
-            data: {
-              type: NOTIFY_BOARD_HASHRATE_DRIFT,
-              minerId,
-              action: CommandType.RESTART,
-              message: formatBoardDriftMessage(minerId, boardDrifts),
-            },
-          });
-        }
-      }
-    }
+    await applyDecisionsToDb(
+      minerId,
+      decisions,
+      isOnline,
+      { autoRestartEnabled: upserted.autoRestartEnabled ?? false, overheatLockedAt: upserted.overheatLockedAt ?? null },
+      {
+        notifyAutoRestart: settings.notifyAutoRestart,
+        notifyRestartPrompt: settings.notifyRestartPrompt,
+        autoRestartEnabled: upserted.autoRestartEnabled ?? false,
+      },
+      now,
+    );
 
     await runPowerAutomation();
     return NextResponse.json({ ok: true });
-  } catch {
+  } catch (err) {
+    console.error("[metrics] DB write failed, falling back to memory store:", err);
+
     const existing = minerStates.get(minerId);
-    const nowIso = now.toISOString();
     const wasOnline = existing?.online ?? null;
     const isOnline = body.online ?? null;
     const lastOnlineAt =
-      isOnline === true && wasOnline !== true ? nowIso : existing?.lastOnlineAt ?? null;
+      isOnline === true && wasOnline !== true ? nowIso : (existing?.lastOnlineAt ?? null);
 
     minerStates.set(minerId, {
       minerId,
@@ -350,8 +490,7 @@ export async function POST(request: NextRequest) {
       asicType: body.asicType ?? existing?.asicType ?? null,
       firmware: body.firmware ?? existing?.firmware ?? null,
       authType: body.authType ?? existing?.authType ?? null,
-      expectedHashrate:
-        body.expectedHashrate ?? existing?.expectedHashrate ?? undefined,
+      expectedHashrate: body.expectedHashrate ?? existing?.expectedHashrate ?? undefined,
       autoRestartEnabled: existing?.autoRestartEnabled ?? false,
       postRestartGraceMinutes: existing?.postRestartGraceMinutes ?? 10,
       lowHashrateThresholdGh: existing?.lowHashrateThresholdGh ?? 10,
@@ -378,10 +517,10 @@ export async function POST(request: NextRequest) {
       lastLowHashrateAt: existing?.lastLowHashrateAt ?? null,
     });
 
-    const { hashrateGh, maxTempC, boardDrifts, overheatThreshold, overheatSleepMinutes,
-      overheatTriggered, wasOverheatLocked, isOverheatLocked,
-      isLowHashrate, restartReady, promptReady, boardDriftReady } =
-      computeDecisions(body, isOnline, {
+    const decisions = computeDecisions(
+      body,
+      isOnline,
+      {
         lowHashrateThresholdGh: existing?.lowHashrateThresholdGh ?? 10,
         postRestartGraceMinutes: existing?.postRestartGraceMinutes ?? 10,
         overheatProtectionEnabled: existing?.overheatProtectionEnabled ?? true,
@@ -390,112 +529,23 @@ export async function POST(request: NextRequest) {
         overheatLocked: existing?.overheatLocked ?? false,
         lastRestartAt: existing?.lastRestartAt ? new Date(existing.lastRestartAt) : null,
         lastLowHashrateAt: existing?.lastLowHashrateAt ? new Date(existing.lastLowHashrateAt) : null,
-      }, settings, now);
-    const minerAfterUpsert = minerStates.get(minerId);
-    if (minerAfterUpsert) {
-      minerAfterUpsert.overheatLocked = isOverheatLocked;
-      if (overheatTriggered && !wasOverheatLocked) {
-        minerAfterUpsert.overheatLockedAt = nowIso;
-      }
-      if (typeof maxTempC === "number") {
-        minerAfterUpsert.overheatLastTempC = maxTempC;
-      }
-      minerStates.set(minerId, minerAfterUpsert);
-    }
-    if (overheatTriggered && !wasOverheatLocked) {
-      const hasPendingSleep = commands.some(
-        (c) => c.minerId === minerId && c.type === CommandType.SLEEP && c.status === CommandStatus.PENDING,
-      );
-      if (!hasPendingSleep) {
-        commands.push({
-          id: crypto.randomUUID(),
-          minerId,
-          type: CommandType.SLEEP,
-          status: CommandStatus.PENDING,
-          createdAt: nowIso,
-        });
-      }
-      notifications.unshift({
-        id: crypto.randomUUID(),
-        type: NOTIFY_OVERHEAT_COOLDOWN,
-        message:
-          `Overheat protection on ${minerId}: ${maxTempC?.toFixed(1)}C >= ${overheatThreshold.toFixed(1)}C. ` +
-          `SLEEP command issued for ${overheatSleepMinutes} minutes. Then WAKE will be sent automatically. ` +
-          `If power is unavailable at wake time, WAKE will be deferred until power is restored.`,
-        minerId,
-        createdAt: nowIso,
-      });
-    }
+      },
+      settings,
+      now,
+    );
 
-    if (isLowHashrate && !isOverheatLocked) {
-      if ((existing?.autoRestartEnabled ?? false) && !AUTO_RESTART_TEMP_DISABLED && restartReady) {
-        const hasPending = commands.some(
-          (c) => c.minerId === minerId && c.type === CommandType.RESTART && c.status === CommandStatus.PENDING,
-        );
-        if (!hasPending) {
-          commands.push({
-            id: crypto.randomUUID(),
-            minerId,
-            type: CommandType.RESTART,
-            status: CommandStatus.PENDING,
-            createdAt: nowIso,
-          });
-          const miner = minerStates.get(minerId);
-          if (miner) miner.lastRestartAt = nowIso;
-          if (settings.notifyAutoRestart) {
-            notifications.unshift({
-              id: crypto.randomUUID(),
-              type: NOTIFY_AUTO_RESTART,
-              message: `Hashrate on ${minerId} dropped to ${hashrateGh?.toFixed(2)} GH/s. Auto-restart issued.`,
-              minerId,
-              createdAt: nowIso,
-            });
-          }
-        }
-      } else if (!(existing?.autoRestartEnabled ?? false) && settings.notifyRestartPrompt && restartReady) {
-        if (!promptReady) {
-          if (notifications.length > 100) {
-            notifications.length = 100;
-          }
-          return NextResponse.json({ ok: true, storage: "memory" });
-        }
-        notifications.unshift({
-          id: crypto.randomUUID(),
-          type: NOTIFY_RESTART_PROMPT,
-          message: `Hashrate on ${minerId} dropped to ${hashrateGh?.toFixed(2)} GH/s. Auto-restart is disabled. Restart now?`,
-          minerId,
-          action: CommandType.RESTART,
-          createdAt: nowIso,
-        });
-        const miner = minerStates.get(minerId);
-        if (miner) miner.lastLowHashrateAt = nowIso;
-      }
-    }
+    applyDecisionsToMemory(
+      minerId,
+      decisions,
+      {
+        notifyAutoRestart: settings.notifyAutoRestart,
+        notifyRestartPrompt: settings.notifyRestartPrompt,
+        autoRestartEnabled: existing?.autoRestartEnabled ?? false,
+      },
+      nowIso,
+      now,
+    );
 
-    if (isOnline === true && boardDrifts.length > 0) {
-      if (boardDriftReady) {
-        const recentBoardDrift = notifications.find(
-          (n) => n.minerId === minerId && n.type === NOTIFY_BOARD_HASHRATE_DRIFT,
-        );
-        const cooldownPassed =
-          !recentBoardDrift ||
-          now.getTime() - new Date(recentBoardDrift.createdAt).getTime() >= BOARD_HASHRATE_DRIFT_NOTIFY_COOLDOWN_MS;
-        if (cooldownPassed) {
-          notifications.unshift({
-            id: crypto.randomUUID(),
-            type: NOTIFY_BOARD_HASHRATE_DRIFT,
-            message: formatBoardDriftMessage(minerId, boardDrifts),
-            minerId,
-            action: CommandType.RESTART,
-            createdAt: nowIso,
-          });
-        }
-      }
-    }
-
-    if (notifications.length > 100) {
-      notifications.length = 100;
-    }
     return NextResponse.json({ ok: true, storage: "memory" });
   }
 }

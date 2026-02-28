@@ -138,8 +138,8 @@ export async function saveDeyeEnergySample(snapshot: DeyeStationSnapshot): Promi
         batteryPowerKw: snapshot.batteryDischargePowerKw,
       },
     });
-  } catch {
-    // Ignore DB write errors and keep runtime stable.
+  } catch (err) {
+    console.error("[deye-energy] Failed to write energy sample to DB:", err);
   }
 }
 
@@ -163,8 +163,8 @@ export async function getDeyeEnergyTodaySummary(
 
     const fromDb = summarizeSamples(samples, generationDayKwh);
     if (fromDb) return fromDb;
-  } catch {
-    // If DB is temporarily unavailable, keep UI metrics from in-memory samples.
+  } catch (err) {
+    console.error("[deye-energy] DB unavailable for energy summary, using in-memory samples:", err);
   }
 
   return summarizeSamples(getMemorySamplesFrom(startOfDay), generationDayKwh);

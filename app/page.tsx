@@ -10,7 +10,7 @@ import { NotificationsSection } from "@/app/components/home/NotificationsSection
 import { ConfirmActionModal } from "@/app/components/home/ConfirmActionModal";
 import { GeneralSettingsModal } from "@/app/components/home/GeneralSettingsModal";
 import { MinerSettingsModal } from "@/app/components/home/MinerSettingsModal";
-import { BellIcon, LogoutIcon, SettingsIcon } from "@/app/components/icons";
+import { BellIcon, LogoutIcon, RefreshIcon, SettingsIcon } from "@/app/components/icons";
 import { useHomeController } from "@/app/hooks/useHomeController";
 import { useAppThemeMode } from "@/app/theme/AppThemeProvider";
 
@@ -80,9 +80,8 @@ function Home() {
     <Container maxWidth={false} sx={{ p: 2 }}>
       <HomeHeader
         uiLang={home.uiLang}
-        reloadPending={home.reloadPending}
-        minersCount={home.miners.length}
         settingsIcon={<SettingsIcon />}
+        refreshIcon={<RefreshIcon />}
         logoutIcon={<LogoutIcon />}
         themeMode={themeMode.mode}
         onOpenSettings={home.openGeneralSettings}
@@ -91,7 +90,6 @@ function Home() {
         onRefresh={() => {
           void home.refreshAll();
         }}
-        onReloadConfig={home.reloadConfig}
         onLogout={() => {
           void home.logout();
         }}
@@ -269,7 +267,12 @@ function Home() {
           uiLang={home.uiLang}
           draft={home.generalSettingsDraft}
           generalSettingsSaving={home.generalSettingsSaving}
+          reloadPending={home.reloadPending}
+          canReloadConfig={home.miners.length > 0}
           setDraft={home.setGeneralSettingsDraft}
+          onReloadConfig={() => {
+            void home.reloadConfig();
+          }}
           onClose={() => {
             home.setShowGeneralSettings(false);
             home.setGeneralSettingsDraft(null);

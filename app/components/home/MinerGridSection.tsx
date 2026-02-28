@@ -23,7 +23,10 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { ActionButton } from "@/app/components/ui/ActionButton";
+import { CancelButton } from "@/app/components/ui/CancelButton";
+import { StatusChip } from "@/app/components/ui/StatusChip";
+import { useTheme, type Theme } from "@mui/material/styles";
 import {
   CommandType,
   MinerControlPhase,
@@ -292,6 +295,15 @@ export function MinerGridSection({
                 : "outlined";
             const hasOnlineBorder = online === true && !isSleepingLike;
             const hasOfflineBorder = online === false;
+            const metricCardSx = {
+              p: 1.35,
+              borderRadius: 1,
+              height: "100%",
+              width: "100%",
+              borderWidth: hasOnlineBorder ? 1 : hasOfflineBorder ? 1 : 2,
+              borderColor: (t: Theme) =>
+                hasOnlineBorder ? t.palette.success.main : hasOfflineBorder ? t.palette.grey[600] : t.palette.grey[500],
+            } as const;
 
             const buttonsLocked =
               online === true &&
@@ -313,18 +325,6 @@ export function MinerGridSection({
               (online === true && effectivePhase === MinerControlPhase.WAKING) ||
               (online === true && effectivePhase === MinerControlPhase.WARMING_UP &&
                 (control?.source === "WAKE" || control?.source === "POWER_ON"));
-            const actionButtonSx = {
-              borderRadius: "8px !important",
-              minWidth: 86,
-              textTransform: "none",
-              fontWeight: 700,
-              "&.Mui-disabled": {
-                bgcolor: "transparent",
-                color: "#9ca3af",
-                borderColor: "#d1d5db",
-              },
-            } as const;
-
             const alias = minerAliases[miner.minerId]?.trim();
             const titleText = alias || `${metric?.asicType ?? "Antminer"} ${miner.minerId}`;
             const displayTitleText = middleEllipsize(titleText, 26);
@@ -334,11 +334,6 @@ export function MinerGridSection({
             const releaseLabel = uiLang === "uk" ? "Реліз" : "Release";
             const linkedDeviceId = tuyaBindingByMiner[miner.minerId] ?? "";
             const linkedDevice = deviceById.get(linkedDeviceId);
-            const linkedDeviceVariant: "filled" | "outlined" =
-              linkedDevice?.on === true ? "filled" : "outlined";
-            const linkedDeviceColor: "success" | "default" =
-              linkedDevice?.on === true ? "success" : "default";
-
             const chips = metric?.boardChips ?? [];
             const hwErrors = metric?.boardHwErrors ?? [];
             const freqs = metric?.boardFreqs ?? [];
@@ -510,7 +505,7 @@ export function MinerGridSection({
                             fullWidth
                           />
                           <Button size="small" color="success" onClick={() => onSaveAlias(miner.minerId)}>Save</Button>
-                          <Button size="small" variant="outlined" color="inherit" onClick={onCancelAliasEdit}>Cancel</Button>
+                          <CancelButton size="small" onClick={onCancelAliasEdit}>Cancel</CancelButton>
                         </Stack>
                       ) : (
                         <Stack spacing={0.35}>
@@ -523,24 +518,12 @@ export function MinerGridSection({
                             sx={{ overflow: "hidden" }}
                           >
                             {linkedDevice ? (
-                              <Chip
-                                size="small"
-                                color={linkedDeviceColor}
-                                variant={linkedDeviceVariant}
+                              <StatusChip
+                                isActive={linkedDevice.on}
                                 label={linkedDevice.name}
                                 title={linkedDevice.name}
-                                sx={{
-                                  maxWidth: 220,
-                                  borderWidth: linkedDevice?.on === false ? 2 : undefined,
-                                  color: linkedDevice?.on === true ? greenChipText : undefined,
-                                  "& .MuiChip-label": {
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
-                                    fontWeight: 700,
-                                    color: linkedDevice?.on === true ? greenChipText : undefined,
-                                  },
-                                }}
+                                truncate
+                                sx={{ maxWidth: 220 }}
                               />
                             ) : (
                               <Chip
@@ -662,22 +645,7 @@ export function MinerGridSection({
 
                   <Grid container spacing={0.8} alignItems="stretch" sx={{ mt: 0.3 }}>
                     <Grid size={{ xs: 12, md: 6 }} sx={{ display: "flex" }}>
-                      <Paper
-                        variant="outlined"
-                        sx={{
-                          p: 1.35,
-                          borderRadius: 1,
-                          height: "100%",
-                          width: "100%",
-                          borderWidth: hasOnlineBorder ? 1 : hasOfflineBorder ? 1 : 2,
-                          borderColor: (theme) =>
-                            hasOnlineBorder
-                              ? theme.palette.success.main
-                              : hasOfflineBorder
-                                ? theme.palette.grey[600]
-                                : theme.palette.grey[500],
-                        }}
-                      >
+                      <Paper variant="outlined" sx={metricCardSx}>
                         <Stack spacing={0.6}>
                           <Typography variant="caption" color="text.secondary">{t(uiLang, "real_time")}</Typography>
                           <Typography variant="h5" fontWeight={800}>{realtimeGh} <Typography component="span" variant="body2">GH/s</Typography></Typography>
@@ -688,22 +656,7 @@ export function MinerGridSection({
                       </Paper>
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }} sx={{ display: "flex" }}>
-                      <Paper
-                        variant="outlined"
-                        sx={{
-                          p: 1.35,
-                          borderRadius: 1,
-                          height: "100%",
-                          width: "100%",
-                          borderWidth: hasOnlineBorder ? 1 : hasOfflineBorder ? 1 : 2,
-                          borderColor: (theme) =>
-                            hasOnlineBorder
-                              ? theme.palette.success.main
-                              : hasOfflineBorder
-                                ? theme.palette.grey[600]
-                                : theme.palette.grey[500],
-                        }}
-                      >
+                      <Paper variant="outlined" sx={metricCardSx}>
                         <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
                           {t(uiLang, "chains_rate")}
                         </Typography>
@@ -869,50 +822,42 @@ export function MinerGridSection({
                     ) : null}
                     <Stack direction="row" spacing={0.6} flexWrap="wrap" sx={{ flexShrink: 0, justifyContent: "flex-end" }}>
                       {overheatLocked ? (
-                        <Button
-                          size="small"
+                        <ActionButton
                           variant="contained"
                           color="success"
-                          sx={actionButtonSx}
                           onClick={() => onUnlockOverheatControl(miner.minerId)}
                         >
                           {t(uiLang, "unlock_control")}
-                        </Button>
+                        </ActionButton>
                       ) : (
                         <>
-                          <Button
-                            size="small"
+                          <ActionButton
                             variant={restartDisabledFinal ? "outlined" : "contained"}
                             color="primary"
                             disabled={restartDisabledFinal}
-                            sx={actionButtonSx}
                             onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.RESTART)}
                             startIcon={restartInProgress ? <ButtonSpinnerIcon color={restartDisabledFinal ? "#94a3b8" : "currentColor"} /> : null}
                           >
                             {t(uiLang, "restart")}
-                          </Button>
-                          <Button
-                            size="small"
+                          </ActionButton>
+                          <ActionButton
                             variant={sleepDisabled ? "outlined" : "contained"}
                             color="inherit"
                             disabled={sleepDisabled}
-                            sx={actionButtonSx}
                             onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.SLEEP)}
                             startIcon={pendingAction === CommandType.SLEEP ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
                           >
                             {t(uiLang, "sleep")}
-                          </Button>
-                          <Button
-                            size="small"
+                          </ActionButton>
+                          <ActionButton
                             variant={wakeDisabled ? "outlined" : "contained"}
                             color="success"
                             disabled={wakeDisabled}
-                            sx={actionButtonSx}
                             onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.WAKE)}
                             startIcon={wakeInProgress ? <ButtonSpinnerIcon color={wakeDisabled ? "#9ca3af" : "currentColor"} /> : null}
                           >
                             {t(uiLang, "wake")}
-                          </Button>
+                          </ActionButton>
                         </>
                       )}
                     </Stack>

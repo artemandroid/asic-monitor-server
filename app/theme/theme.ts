@@ -4,6 +4,23 @@ import type { PaletteMode } from "@mui/material/styles";
 export function createAppTheme(mode: PaletteMode) {
   const isLight = mode === "light";
   return createTheme({
+    app: {
+      header: {
+        controlSize: 42,
+        logoSize: 42,
+        gap: 1.25,
+        iconSizeDefault: 21,
+        iconSizeTheme: 22,
+        language: {
+          triggerRadiusClosed: 2,
+          triggerRadiusOpen: "8px 8px 0 0",
+          menuRadius: "0 0 8px 8px",
+          itemHeight: 40,
+          itemRadius: 1.5,
+          itemFontWeight: 700,
+        },
+      },
+    },
     palette: {
       mode,
       primary: {
@@ -16,6 +33,10 @@ export function createAppTheme(mode: PaletteMode) {
       background: {
         default: isLight ? "#f3f6fb" : "#0f1113",
         paper: isLight ? "#ffffff" : "#171a1e",
+      },
+      common: {
+        white: isLight ? "#ffffff" : "#f0f0f0",
+        black: "#000000",
       },
       divider: isLight ? "rgba(100, 116, 139, 0.24)" : "rgba(148, 163, 184, 0.24)",
       text: isLight

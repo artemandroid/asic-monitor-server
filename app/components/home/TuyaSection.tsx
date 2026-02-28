@@ -2,13 +2,11 @@ import AppsRoundedIcon from "@mui/icons-material/AppsRounded";
 import type { MinerState } from "@/app/lib/types";
 import {
   Box,
-  Button,
   Chip,
   Collapse,
   FormControl,
   FormControlLabel,
   MenuItem,
-  Paper,
   Select,
   Stack,
   Switch,
@@ -20,7 +18,9 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { ActionButton } from "@/app/components/ui/ActionButton";
+import { SectionPaper } from "@/app/components/ui/SectionPaper";
+import { StatusChip } from "@/app/components/ui/StatusChip";
 import { t, type UiLang } from "@/app/lib/ui-lang";
 
 type TuyaDevice = {
@@ -86,25 +86,8 @@ export function TuyaSection({
   onSaveTuyaBinding,
   onRequestTuyaSwitchConfirm,
 }: TuyaSectionProps) {
-  const theme = useTheme();
-  const greenChipText = theme.palette.custom.chipTextOnSuccess;
   const statusLabel = (d: TuyaDevice) =>
     d.on === null ? (d.online ? "?" : t(uiLang, "offl")) : d.on ? onText : offText;
-  const statusVariant = (d: TuyaDevice) =>
-    d.on === null ? "outlined" : d.on ? "filled" : "outlined";
-  const statusColor = (d: TuyaDevice): "success" | "default" =>
-    d.on === true ? "success" : "default";
-  const actionButtonSx = {
-    borderRadius: "8px !important",
-    minWidth: 74,
-    textTransform: "none",
-    fontWeight: 700,
-    "&.Mui-disabled": {
-      bgcolor: "transparent",
-      color: "#9ca3af",
-      borderColor: "#d1d5db",
-    },
-  } as const;
   const compactCellSx = {
     py: 0.45,
     px: 1,
@@ -117,7 +100,7 @@ export function TuyaSection({
     typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)} kWh` : "-";
 
   return (
-    <Paper sx={{ p: 1.25, mb: 1.25 }}>
+    <SectionPaper sx={{ mb: 1.25 }}>
       <Stack
         direction="row"
         alignItems="center"
@@ -143,25 +126,13 @@ export function TuyaSection({
                 />
               ) : (
                 visibleTuyaDevices.slice(0, 4).map((d) => (
-                  <Chip
+                  <StatusChip
                     key={`${d.id}-collapsed`}
-                    size="small"
-                    color={statusColor(d)}
-                    variant={statusVariant(d)}
+                    isActive={d.on}
                     label={d.name}
                     title={`${d.name}: ${statusLabel(d)}`}
-                    sx={{
-                      maxWidth: 220,
-                      borderWidth: d.on === false ? 2 : undefined,
-                      color: d.on === true ? greenChipText : undefined,
-                      "& .MuiChip-label": {
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        fontWeight: 700,
-                        color: d.on === true ? greenChipText : undefined,
-                      },
-                    }}
+                    truncate
+                    sx={{ maxWidth: 220 }}
                   />
                 ))
               )}
@@ -215,18 +186,10 @@ export function TuyaSection({
                         </Typography>
                       </TableCell>
                       <TableCell align="center" sx={compactCellSx}>
-                        <Chip
-                          size="small"
-                          color={statusColor(device)}
-                          variant={statusVariant(device)}
+                        <StatusChip
+                          isActive={device.on}
                           label={statusLabel(device)}
-                          sx={{
-                            minWidth: 74,
-                            fontWeight: 700,
-                            borderWidth: device.on === false ? 2 : undefined,
-                            color: device.on === true ? greenChipText : undefined,
-                            "& .MuiChip-label": { color: device.on === true ? greenChipText : undefined },
-                          }}
+                          sx={{ minWidth: 74 }}
                         />
                       </TableCell>
                       <TableCell align="center" sx={compactCellSx}>
@@ -284,28 +247,26 @@ export function TuyaSection({
                       </TableCell>
                       <TableCell align="center" sx={compactCellSx}>
                         <Stack direction="row" spacing={0.6} justifyContent="center">
-                          <Button
-                            size="small"
+                          <ActionButton
+                            minWidth={74}
                             variant={onDisabled ? "outlined" : "contained"}
                             color="success"
                             disabled={onDisabled}
-                            sx={actionButtonSx}
                             title={device.switchCode ? `Code: ${device.switchCode}` : "No switch code"}
                             onClick={() => onRequestTuyaSwitchConfirm(device, true)}
                           >
                             {pending === "ON" ? "..." : onText}
-                          </Button>
-                          <Button
-                            size="small"
+                          </ActionButton>
+                          <ActionButton
+                            minWidth={74}
                             variant={offDisabled ? "outlined" : "contained"}
                             color="error"
                             disabled={offDisabled}
-                            sx={actionButtonSx}
                             title={device.switchCode ? `Code: ${device.switchCode}` : "No switch code"}
                             onClick={() => onRequestTuyaSwitchConfirm(device, false)}
                           >
                             {pending === "OFF" ? "..." : offText}
-                          </Button>
+                          </ActionButton>
                         </Stack>
                       </TableCell>
                     </TableRow>
@@ -329,6 +290,6 @@ export function TuyaSection({
           Tuya API error: {tuyaData.error}
         </Typography>
       ) : null}
-    </Paper>
+    </SectionPaper>
   );
 }

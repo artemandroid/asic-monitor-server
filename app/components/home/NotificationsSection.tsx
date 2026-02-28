@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { Alert, Box, Button, Collapse, Paper, Stack, Typography } from "@mui/material";
+import { Alert, Box, Collapse, Paper, Stack, Typography } from "@mui/material";
+import { ActionButton } from "@/app/components/ui/ActionButton";
 import type { SxProps, Theme } from "@mui/material/styles";
 import { CommandType, type Notification } from "@/app/lib/types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
@@ -47,18 +48,6 @@ export function NotificationsSection({
     if (isRestartNotification(note)) return "info";
     return "success";
   };
-
-  const restartButtonSx = {
-    borderRadius: "8px !important",
-    minWidth: 86,
-    textTransform: "none",
-    fontWeight: 700,
-    "&.Mui-disabled": {
-      bgcolor: "transparent",
-      color: "#9ca3af",
-      borderColor: "#d1d5db",
-    },
-  } as const;
 
   if (horizontalCollapse && notificationsCollapsed) {
     return (
@@ -127,17 +116,15 @@ export function NotificationsSection({
                 const restartAction = restartActionStateForNote(note);
                 return (
                   <Box sx={{ mt: 0.9 }}>
-                    <Button
-                      size="small"
+                    <ActionButton
                       variant={restartAction.enabled ? "contained" : "outlined"}
                       color={restartAction.enabled ? "primary" : "inherit"}
                       disabled={!restartAction.enabled}
-                      sx={restartButtonSx}
                       title={restartAction.title}
                       onClick={() => onRequestMinerCommandConfirm(note.minerId!, CommandType.RESTART)}
                     >
                       {t(uiLang, "restart_now")}
-                    </Button>
+                    </ActionButton>
                   </Box>
                 );
               })()}

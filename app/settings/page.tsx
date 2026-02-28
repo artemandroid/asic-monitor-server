@@ -16,6 +16,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { SectionPaper } from "@/app/components/ui/SectionPaper";
 import { clearAuthState, getAuthState, setAuthState } from "@/app/lib/auth-client";
 import type { MinerState, Settings } from "@/app/lib/types";
 import { readUiLang, t, type UiLang, writeUiLang } from "@/app/lib/ui-lang";
@@ -135,7 +136,7 @@ export default function SettingsPage() {
 
   return (
     <Container maxWidth={false} sx={{ p: 2 }}>
-      <Paper sx={{ p: 1.5, mb: 1.25 }}>
+      <SectionPaper sx={{ p: 1.5, mb: 1.25 }}>
         <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
           <Stack direction="row" spacing={1.25} alignItems="center">
             <Button component={Link} href="/" variant="outlined" color="primary">
@@ -182,7 +183,7 @@ export default function SettingsPage() {
             </Button>
           </Stack>
         </Stack>
-      </Paper>
+      </SectionPaper>
 
       {error && (
         <Alert severity="error" variant="outlined" sx={{ mb: 1.25 }}>
@@ -192,7 +193,7 @@ export default function SettingsPage() {
 
       <Grid container spacing={1.25}>
         <Grid size={{ xs: 12, lg: 6 }}>
-          <Paper sx={{ p: 1.5 }}>
+          <SectionPaper sx={{ p: 1.5 }}>
             <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1 }}>
               {t(uiLang, "general_alerts")}
             </Typography>
@@ -235,11 +236,11 @@ export default function SettingsPage() {
                 </Stack>
               </Stack>
             )}
-          </Paper>
+          </SectionPaper>
         </Grid>
 
         <Grid size={{ xs: 12, lg: 6 }}>
-          <Paper sx={{ p: 1.5 }}>
+          <SectionPaper sx={{ p: 1.5 }}>
             <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1 }}>
               {t(uiLang, "per_miner_auto_restart")}
             </Typography>
@@ -270,7 +271,7 @@ export default function SettingsPage() {
                 </Typography>
               )}
             </Stack>
-          </Paper>
+          </SectionPaper>
         </Grid>
       </Grid>
     </Container>

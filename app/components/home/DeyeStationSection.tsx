@@ -6,10 +6,12 @@ import {
   Chip,
   Menu,
   MenuItem,
-  Paper,
   Stack,
   Typography,
 } from "@mui/material";
+import { SectionPaper } from "@/app/components/ui/SectionPaper";
+import { StatPill } from "@/app/components/ui/StatPill";
+import { StatusChip } from "@/app/components/ui/StatusChip";
 import { useTheme } from "@mui/material/styles";
 import type { DeyeStationSnapshot } from "@/app/lib/deye-types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
@@ -104,17 +106,11 @@ export function DeyeStationSection({
   const neutralGray = theme.palette.custom.deyeNeutralGray;
   const fullBlue = theme.palette.custom.deyeFullBlue;
   const negativeRed = theme.palette.custom.deyeNegativeRed;
-  const greenChipText = theme.palette.custom.chipTextOnSuccess;
   const valueTextColor = theme.palette.text.primary;
   const formatGridParsed = (value: boolean | null) =>
     value === true ? t(uiLang, "connected") : value === false ? t(uiLang, "disconnected") : t(uiLang, "unknown");
 
   const gridStatusLabel = formatGridParsed(deyeStation?.gridOnline ?? null);
-  const gridStatusColor: "success" | "default" = deyeStation?.gridOnline === true
-    ? "success"
-    : "default";
-  const gridStatusVariant: "filled" | "outlined" =
-    deyeStation?.gridOnline === true ? "filled" : "outlined";
 
   const batteryPowerKw = deyeStation?.batteryDischargePowerKw ?? null;
   const showBatteryPower =
@@ -177,7 +173,7 @@ export function DeyeStationSection({
   const addAutomatMenuOpen = Boolean(addAutomatAnchorEl);
 
   return (
-    <Paper sx={{ p: 1.25, mb: 1.25 }}>
+    <SectionPaper sx={{ mb: 1.25 }}>
       <Stack
         direction="row"
         alignItems="center"
@@ -198,109 +194,45 @@ export function DeyeStationSection({
             minWidth={0}
             sx={{ flexWrap: "wrap", rowGap: 0.8 }}
           >
-            <Chip
+            <StatusChip
+              isActive={deyeStation?.gridOnline}
               label={gridStatusLabel}
-              size="small"
-              color={gridStatusColor}
-              variant={gridStatusVariant}
-              sx={{
-                borderWidth: deyeStation?.gridOnline === false ? 2 : undefined,
-                fontWeight: 700,
-                color: deyeStation?.gridOnline === true ? greenChipText : undefined,
-                "& .MuiChip-label": {
-                  color: deyeStation?.gridOnline === true ? greenChipText : undefined,
-                },
-              }}
             />
-            <Box
-              sx={{
-                px: 0.9,
-                py: 0.35,
-                borderRadius: 1.2,
-                border: `1px solid ${batteryVisualColor}`,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.75,
-              }}
-            >
+            <StatPill borderColor={batteryVisualColor} gap={0.75}>
               <BatteryPill batteryColor={batteryColor} batteryFill={batteryFill} />
               <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
                 {typeof batterySoc === "number" ? `${batterySoc.toFixed(1)}%` : "-"}
               </Typography>
-            </Box>
+            </StatPill>
             {batteryModeLabel && showBatteryStatusPill ? (
-              <Box
-                sx={{
-                  px: 0.9,
-                  py: 0.35,
-                  borderRadius: 1.2,
-                  border: `1px solid ${batteryStatusColor}`,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 0.6,
-                }}
-              >
+              <StatPill borderColor={batteryStatusColor}>
                 <Typography variant="body2" sx={{ color: batteryStatusColor }} noWrap>
                   {batteryModeLabel}:
                 </Typography>
                 <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
                   {batteryPowerText}
                 </Typography>
-              </Box>
+              </StatPill>
             ) : null}
             {hasGeneration ? (
-              <Box
-                sx={{
-                  px: 0.9,
-                  py: 0.35,
-                  borderRadius: 1.2,
-                  border: `1px solid ${generationLabelColor}`,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 0.6,
-                }}
-              >
+              <StatPill borderColor={generationLabelColor}>
                 <Typography variant="body2" sx={{ color: generationLabelColor }} noWrap>
                   {t(uiLang, "generation")}:
                 </Typography>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    color: valueTextColor,
-                    fontWeight: 500,
-                  }}
-                  noWrap
-                >
+                <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
                   {typeof generationKw === "number" ? `${generationKw.toFixed(2)} ${kwUnit}` : "-"}
                 </Typography>
-              </Box>
+              </StatPill>
             ) : null}
             {showGridFlow ? (
-              <Box
-                sx={{
-                  px: 0.9,
-                  py: 0.35,
-                  borderRadius: 1.2,
-                  border: `1px solid ${gridLabelColor}`,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 0.6,
-                }}
-              >
+              <StatPill borderColor={gridLabelColor}>
                 <Typography variant="body2" sx={{ color: gridLabelColor }} noWrap>
                   {gridPowerLabel}:
                 </Typography>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    color: valueTextColor,
-                    fontWeight: 500,
-                  }}
-                  noWrap
-                >
+                <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
                   {typeof gridPowerKw === "number" ? `${Math.abs(gridPowerKw).toFixed(2)} ${kwUnit}` : "-"}
                 </Typography>
-              </Box>
+              </StatPill>
             ) : null}
           </Stack>
         </Stack>
@@ -409,6 +341,6 @@ export function DeyeStationSection({
         </Typography>
       ) : null}
 
-    </Paper>
+    </SectionPaper>
   );
 }
