@@ -39,14 +39,25 @@ export function NotificationsSection({
   containerSx,
   horizontalCollapse = false,
 }: NotificationsSectionProps) {
-  const isRestartNotification = (note: Notification) =>
-    note.action === CommandType.RESTART || /restart|рестарт|перезапуск|перезавантаж/i.test(note.message);
-  const isOffNotification = (note: Notification) =>
-    /auto off|power off|turned off|switch off|вимк|відключ|отключ|знеструм|sleep/i.test(note.message);
-  const getSeverity = (note: Notification): "error" | "info" | "success" => {
-    if (isOffNotification(note)) return "error";
-    if (isRestartNotification(note)) return "info";
-    return "success";
+  const getSeverity = (note: Notification): "error" | "warning" | "info" | "success" => {
+    switch (note.type) {
+      case "COMMAND_RESULT":
+        return /\bfailed\b/i.test(note.message) ? "error" : "info";
+      case "OVERHEAT_COOLDOWN":
+      case "LOW_HASHRATE_PROMPT":
+      case "CLIENT_ERROR":
+        return "error";
+      case "AUTO_RESTART":
+      case "BOARD_HASHRATE_DRIFT":
+      case "OVERHEAT_WAKE_DEFERRED":
+        return "warning";
+      case "OVERHEAT_WAKE_SENT":
+        return "success";
+      case "POWER_AUTOMATION":
+        return /auto on/i.test(note.message) ? "success" : "warning";
+      default:
+        return "info";
+    }
   };
 
   if (horizontalCollapse && notificationsCollapsed) {
