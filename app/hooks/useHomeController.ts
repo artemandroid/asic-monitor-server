@@ -13,10 +13,12 @@ import type {
 const DEFAULT_MINER_SYNC_MS = 60_000;
 const DEFAULT_DEYE_SYNC_MS = 360_000;
 const DEFAULT_TUYA_SYNC_MS = 3_600_000;
+const FIXED_TUYA_SYNC_SEC = 3600;
 const LOW_HASHRATE_RESTART_GRACE_MS = 10 * 60 * 1000;
 const CONTROL_ACTION_LOCK_MS = 10 * 60 * 1000;
 const NOTIFICATION_VISIBLE_COUNT_KEY = "mc_notification_visible_count";
 const BOARD_COUNT_BY_MINER_KEY = "mc_board_count_by_miner";
+const EMPTY_DEVICE_IDS: string[] = [];
 
 type MinerControlPhase = "RESTARTING" | "SLEEPING" | "WAKING" | "WARMING_UP";
 type MinerControlState = {
@@ -44,8 +46,8 @@ type MinerSettingsPanel = {
   lowHashrateThresholdGh: number;
   autoPowerOnGridRestore: boolean;
   autoPowerOffGridLoss: boolean;
-  autoPowerOffGenerationBelowKw: number | null;
-  autoPowerOnGenerationAboveKw: number | null;
+  autoPowerOnWhenGenerationCoversConsumption: boolean;
+  autoPowerOnGenerationAboveKw?: number | null;
   autoPowerOffBatteryBelowPercent: number | null;
   autoPowerOnBatteryAbovePercent: number | null;
   autoPowerRestoreDelayMinutes: number;
@@ -122,6 +124,8 @@ type TuyaDevice = {
   on: boolean | null;
   switchCode: string | null;
   powerW: number | null;
+  energyTodayKwh: number | null;
+  energyTotalKwh: number | null;
   category: string | null;
   productName: string | null;
 };
@@ -136,6 +140,26 @@ type TuyaSnapshot = {
 type PendingConfirmAction =
   | { kind: "MINER_COMMAND"; minerId: string; command: CommandType }
   | { kind: "TUYA_SWITCH"; device: TuyaDevice; on: boolean };
+
+function normalizeDeyeStationAutomatBindings(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object") return {};
+  const next: Record<string, string[]> = {};
+  for (const [stationKeyRaw, deviceIdsRaw] of Object.entries(value as Record<string, unknown>)) {
+    const stationNum = Number.parseInt(stationKeyRaw, 10);
+    if (!Number.isFinite(stationNum) || stationNum <= 0 || !Array.isArray(deviceIdsRaw)) continue;
+    const unique = new Set<string>();
+    for (const item of deviceIdsRaw) {
+      if (typeof item !== "string") continue;
+      const normalized = item.trim();
+      if (!normalized) continue;
+      unique.add(normalized);
+    }
+    if (unique.size > 0) {
+      next[String(Math.trunc(stationNum))] = [...unique];
+    }
+  }
+  return next;
+}
 
 function extractBoardCount(metric: unknown): number {
   if (!metric || typeof metric !== "object") return 0;
@@ -212,6 +236,9 @@ export function useHomeController() {
   const [pendingActionByMiner, setPendingActionByMiner] = useState<Record<string, CommandType | undefined>>({});
   const [deyeStation, setDeyeStation] = useState<DeyeStationSnapshot | null>(null);
   const [deyeLoading, setDeyeLoading] = useState(false);
+  const [deyeAutomatsByStation, setDeyeAutomatsByStation] = useState<Record<string, string[]>>({});
+  const [deyeAutomatsLoaded, setDeyeAutomatsLoaded] = useState(false);
+  const [deyeAutomatsSaving, setDeyeAutomatsSaving] = useState(false);
   const [tuyaData, setTuyaData] = useState<TuyaSnapshot | null>(null);
   const [tuyaLoading, setTuyaLoading] = useState(false);
   const [tuyaBindingByMiner, setTuyaBindingByMiner] = useState<Record<string, string>>({});
@@ -229,7 +256,7 @@ export function useHomeController() {
   const [statusBadgesVertical, setStatusBadgesVertical] = useState(false);
   const refreshMainRef = useRef<() => Promise<void>>(async () => {});
   const fetchDeyeStationRef = useRef<() => Promise<void>>(async () => {});
-  const fetchTuyaDevicesRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
+  const fetchTuyaDevicesRef = useRef<() => Promise<void>>(async () => {});
   const processedCommandResultIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -477,9 +504,7 @@ export function useHomeController() {
         if (typeof data.deyeSyncIntervalSec === "number" && data.deyeSyncIntervalSec >= 5) {
           setDeyeSyncMs(Math.floor(data.deyeSyncIntervalSec) * 1000);
         }
-        if (typeof data.tuyaSyncIntervalSec === "number" && data.tuyaSyncIntervalSec >= 5) {
-          setTuyaSyncMs(Math.floor(data.tuyaSyncIntervalSec) * 1000);
-        }
+        setTuyaSyncMs(FIXED_TUYA_SYNC_SEC * 1000);
       } catch {
         // ignore
       }
@@ -797,6 +822,7 @@ export function useHomeController() {
         );
       }
       setDeyeStation(payload as DeyeStationSnapshot);
+      await fetchDeyeStationAutomats();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setDeyeStation((prev) => ({
@@ -828,14 +854,77 @@ export function useHomeController() {
     }
   };
 
-  const fetchTuyaDevices = async (force = false) => {
+  const fetchDeyeStationAutomats = async () => {
+    if (!getAuthState()) {
+      router.replace("/auth");
+      return;
+    }
+    try {
+      const res = await fetch("/api/deye/station-automats", { cache: "no-store" });
+      const payload = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        bindingsByStation?: Record<string, string[]>;
+      };
+      if (!res.ok) {
+        throw new Error(payload.error ?? `Failed to fetch Deye station automats: ${res.status}`);
+      }
+      setDeyeAutomatsByStation(normalizeDeyeStationAutomatBindings(payload.bindingsByStation));
+      setDeyeAutomatsLoaded(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      pushClientNotification(message);
+    }
+  };
+
+  const saveDeyeStationAutomatBinding = async (
+    stationId: number,
+    deviceId: string,
+    bind: boolean,
+  ) => {
+    if (!getAuthState()) {
+      router.replace("/auth");
+      return;
+    }
+    if (!Number.isFinite(stationId) || stationId <= 0) return;
+    const normalizedDeviceId = deviceId.trim();
+    if (!normalizedDeviceId) return;
+
+    setDeyeAutomatsSaving(true);
+    try {
+      const res = await fetch("/api/deye/station-automats", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stationId: Math.trunc(stationId),
+          deviceId: normalizedDeviceId,
+          bind,
+        }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        bindingsByStation?: Record<string, string[]>;
+      };
+      if (!res.ok) {
+        throw new Error(payload.error ?? `Failed to update Deye station automats: ${res.status}`);
+      }
+      setDeyeAutomatsByStation(normalizeDeyeStationAutomatBindings(payload.bindingsByStation));
+      setDeyeAutomatsLoaded(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      pushClientNotification(message);
+    } finally {
+      setDeyeAutomatsSaving(false);
+    }
+  };
+
+  const fetchTuyaDevices = async () => {
     if (!getAuthState()) {
       router.replace("/auth");
       return;
     }
     setTuyaLoading(true);
     try {
-      const res = await fetch(force ? "/api/tuya/devices?force=1" : "/api/tuya/devices");
+      const res = await fetch("/api/tuya/devices");
       const payload = (await res.json()) as TuyaSnapshot | { error?: string };
       if (!res.ok) {
         throw new Error(
@@ -893,7 +982,7 @@ export function useHomeController() {
           },
         }));
       }
-      await fetchTuyaDevices(true);
+      await fetchTuyaDevices();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       if (linkedMinerId) {
@@ -941,11 +1030,28 @@ export function useHomeController() {
       router.replace("/auth");
       return;
     }
+    const normalizedDeviceId =
+      typeof deviceId === "string" && deviceId.trim().length > 0 ? deviceId.trim() : null;
+    const stationKey =
+      typeof deyeStation?.stationId === "number" && Number.isFinite(deyeStation.stationId)
+        ? String(Math.trunc(deyeStation.stationId))
+        : null;
+    const stationAutomatSet = stationKey ? new Set(deyeAutomatsByStation[stationKey] ?? []) : new Set<string>();
+    const safeDeviceId = !normalizedDeviceId
+      ? null
+      : stationKey && deyeAutomatsLoaded
+        ? stationAutomatSet.has(normalizedDeviceId)
+          ? normalizedDeviceId
+          : null
+        : normalizedDeviceId;
+    if (normalizedDeviceId && stationKey && deyeAutomatsLoaded && !safeDeviceId) {
+      pushClientNotification("Automat is not bound to current Deye station.");
+    }
     try {
       const res = await fetch("/api/miners/bindings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minerId, deviceId }),
+        body: JSON.stringify({ minerId, deviceId: safeDeviceId }),
       });
       const payload = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
@@ -954,11 +1060,11 @@ export function useHomeController() {
       setTuyaBindingByMiner((prev) => {
         const next: Record<string, string> = {};
         for (const [id, dev] of Object.entries(prev)) {
-          if (dev === deviceId) continue;
+          if (dev === safeDeviceId) continue;
           next[id] = dev;
         }
-        if (deviceId) {
-          next[minerId] = deviceId;
+        if (safeDeviceId) {
+          next[minerId] = safeDeviceId;
         }
         return next;
       });
@@ -973,7 +1079,7 @@ export function useHomeController() {
   };
 
   const refreshAll = async () => {
-    await Promise.all([refreshMain(), fetchDeyeStation(), fetchTuyaDevices(true)]);
+    await Promise.all([refreshMain(), fetchDeyeStation(), fetchTuyaDevices(), fetchDeyeStationAutomats()]);
   };
 
   refreshMainRef.current = refreshMain;
@@ -1006,8 +1112,7 @@ export function useHomeController() {
           typeof data.minerSyncIntervalSec === "number" ? data.minerSyncIntervalSec : 60,
         deyeSyncIntervalSec:
           typeof data.deyeSyncIntervalSec === "number" ? data.deyeSyncIntervalSec : 360,
-        tuyaSyncIntervalSec:
-          typeof data.tuyaSyncIntervalSec === "number" ? data.tuyaSyncIntervalSec : 3600,
+        tuyaSyncIntervalSec: FIXED_TUYA_SYNC_SEC,
         restartDelayMinutes: data.restartDelayMinutes,
         hashrateDeviationPercent: data.hashrateDeviationPercent,
         notifyAutoRestart: data.notifyAutoRestart,
@@ -1059,13 +1164,9 @@ export function useHomeController() {
         typeof updated.deyeSyncIntervalSec === "number"
           ? updated.deyeSyncIntervalSec
           : generalSettingsDraft.deyeSyncIntervalSec;
-      const savedTuyaSyncSec =
-        typeof updated.tuyaSyncIntervalSec === "number"
-          ? updated.tuyaSyncIntervalSec
-          : generalSettingsDraft.tuyaSyncIntervalSec;
       setMinerSyncMs(Math.max(5, Math.floor(savedMinerSyncSec)) * 1000);
       setDeyeSyncMs(Math.max(5, Math.floor(savedDeyeSyncSec)) * 1000);
-      setTuyaSyncMs(Math.max(5, Math.floor(savedTuyaSyncSec)) * 1000);
+      setTuyaSyncMs(FIXED_TUYA_SYNC_SEC * 1000);
       setShowGeneralSettings(false);
       setGeneralSettingsDraft(null);
     } catch (err) {
@@ -1092,13 +1193,11 @@ export function useHomeController() {
         autoPowerOnBatteryAbovePercent:
           typeof data.autoPowerOnBatteryAbovePercent === "number"
             ? data.autoPowerOnBatteryAbovePercent
-            : typeof data.autoPowerOffBatteryBelowPercent === "number"
-              ? data.autoPowerOffBatteryBelowPercent
-              : null,
-        autoPowerOnGenerationAboveKw:
-          typeof data.autoPowerOnGenerationAboveKw === "number"
-            ? data.autoPowerOnGenerationAboveKw
             : null,
+        autoPowerOnWhenGenerationCoversConsumption:
+          typeof data.autoPowerOnWhenGenerationCoversConsumption === "boolean"
+            ? data.autoPowerOnWhenGenerationCoversConsumption
+            : typeof data.autoPowerOnGenerationAboveKw === "number",
         autoPowerRestoreDelayMinutes:
           typeof data.autoPowerRestoreDelayMinutes === "number"
             ? data.autoPowerRestoreDelayMinutes
@@ -1130,16 +1229,13 @@ export function useHomeController() {
   const saveMinerSettings = async () => {
     if (!minerSettingsDraft) return;
     const offThreshold = minerSettingsDraft.autoPowerOffBatteryBelowPercent;
-    const onThreshold =
-      minerSettingsDraft.autoPowerOnBatteryAbovePercent ??
-      minerSettingsDraft.autoPowerOffBatteryBelowPercent ??
-      null;
+    const onThreshold = minerSettingsDraft.autoPowerOnBatteryAbovePercent;
     if (
       typeof offThreshold === "number" &&
       typeof onThreshold === "number" &&
-      onThreshold < offThreshold
+      onThreshold < offThreshold + 5
     ) {
-      pushClientNotification("Auto ON battery threshold must be >= Auto OFF battery threshold.");
+      pushClientNotification("Auto ON battery threshold must be at least Auto OFF threshold + 5%.");
       return;
     }
     setMinerSettingsSaving(true);
@@ -1155,8 +1251,8 @@ export function useHomeController() {
             lowHashrateThresholdGh: minerSettingsDraft.lowHashrateThresholdGh,
             autoPowerOnGridRestore: minerSettingsDraft.autoPowerOnGridRestore,
             autoPowerOffGridLoss: minerSettingsDraft.autoPowerOffGridLoss,
-            autoPowerOffGenerationBelowKw: minerSettingsDraft.autoPowerOffGenerationBelowKw,
-            autoPowerOnGenerationAboveKw: minerSettingsDraft.autoPowerOnGenerationAboveKw,
+            autoPowerOnWhenGenerationCoversConsumption:
+              minerSettingsDraft.autoPowerOnWhenGenerationCoversConsumption,
             autoPowerOffBatteryBelowPercent: minerSettingsDraft.autoPowerOffBatteryBelowPercent,
             autoPowerOnBatteryAbovePercent: minerSettingsDraft.autoPowerOnBatteryAbovePercent,
             autoPowerRestoreDelayMinutes: minerSettingsDraft.autoPowerRestoreDelayMinutes,
@@ -1421,6 +1517,11 @@ export function useHomeController() {
   };
 
   const localizeNotificationMessage = (note: Notification): string => {
+    const formatTempC = (raw: string): string => {
+      const num = Number.parseFloat(raw);
+      if (!Number.isFinite(num)) return raw;
+      return Number(num.toFixed(1)).toString();
+    };
     const message = note.message;
     const autoRestart = /^Hashrate on (.+) dropped to ([\d.]+) GH\/s\. Auto-restart issued\.$/.exec(message);
     if (autoRestart) {
@@ -1447,8 +1548,8 @@ export function useHomeController() {
       if (overheatCooldown) {
         return t(uiLang, "overheat_cooldown_started_auto_wake", {
           minerId: overheatCooldown[1],
-          tempC: overheatCooldown[2],
-          limitC: overheatCooldown[3],
+          tempC: formatTempC(overheatCooldown[2]),
+          limitC: formatTempC(overheatCooldown[3]),
           minutes: overheatCooldown[4],
         });
       }
@@ -1550,9 +1651,38 @@ export function useHomeController() {
     const bv = bi >= 0 ? bi : Number.MAX_SAFE_INTEGER;
     return av - bv;
   });
-  const deviceById = new Map((tuyaData?.devices ?? []).map((d) => [d.id, d]));
+  const hasCurrentDeyeStation =
+    typeof deyeStation?.stationId === "number" && Number.isFinite(deyeStation.stationId);
+  const currentDeyeStationAutomatIds =
+    hasCurrentDeyeStation
+      ? deyeAutomatsByStation[String(Math.trunc(deyeStation.stationId))] ?? EMPTY_DEVICE_IDS
+      : EMPTY_DEVICE_IDS;
+  const currentDeyeStationAutomatSet = new Set(currentDeyeStationAutomatIds);
+  const shouldRestrictAutomatsByStation = deyeAutomatsLoaded && hasCurrentDeyeStation;
+  const deyeStationByDeviceId = Object.entries(deyeAutomatsByStation).reduce<Record<string, string>>(
+    (acc, [stationId, deviceIds]) => {
+      for (const deviceId of deviceIds) {
+        if (!deviceId || typeof deviceId !== "string") continue;
+        acc[deviceId] = stationId;
+      }
+      return acc;
+    },
+    {},
+  );
+  const stationTuyaDevices = shouldRestrictAutomatsByStation
+    ? (tuyaData?.devices ?? []).filter((d) => currentDeyeStationAutomatSet.has(d.id))
+    : (tuyaData?.devices ?? []);
+  const deviceById = new Map(stationTuyaDevices.map((d) => [d.id, d]));
+  const validTuyaBindingByMiner = shouldRestrictAutomatsByStation
+    ? Object.entries(tuyaBindingByMiner).reduce<Record<string, string>>((acc, [minerId, deviceId]) => {
+        const normalized = typeof deviceId === "string" ? deviceId.trim() : "";
+        if (!normalized || !currentDeyeStationAutomatSet.has(normalized)) return acc;
+        acc[minerId] = normalized;
+        return acc;
+      }, {})
+    : tuyaBindingByMiner;
   const deviceToMiner = new Map<string, string>();
-  for (const [minerId, deviceId] of Object.entries(tuyaBindingByMiner)) {
+  for (const [minerId, deviceId] of Object.entries(validTuyaBindingByMiner)) {
     if (deviceId) deviceToMiner.set(deviceId, minerId);
   }
 
@@ -1611,10 +1741,79 @@ export function useHomeController() {
       }
     }
   }, [notifications, clientNotifications]);
-  const hasAnyBinding = Object.keys(tuyaBindingByMiner).length > 0;
-  const visibleTuyaDevices = (tuyaData?.devices ?? []).filter(
+  const hasAnyBinding = Object.keys(validTuyaBindingByMiner).length > 0;
+  const visibleTuyaDevices = stationTuyaDevices.filter(
     (d) => !hideUnboundAutomats || !hasAnyBinding || deviceToMiner.has(d.id),
   );
+  const automatsTodayConsumptionKwh = stationTuyaDevices.reduce((sum, device) => {
+    const value = device.energyTodayKwh;
+    return typeof value === "number" && Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+
+  useEffect(() => {
+    if (!deyeAutomatsLoaded) return;
+    if (typeof deyeStation?.stationId !== "number" || !Number.isFinite(deyeStation.stationId)) return;
+    const stationAutomatSet = new Set(currentDeyeStationAutomatIds);
+    const invalidMinerIds = Object.entries(tuyaBindingByMiner)
+      .filter(([, deviceId]) => {
+        const normalized = typeof deviceId === "string" ? deviceId.trim() : "";
+        return normalized.length > 0 && !stationAutomatSet.has(normalized);
+      })
+      .map(([minerId]) => minerId);
+    if (invalidMinerIds.length === 0) return;
+
+    setTuyaBindingByMiner((prev) => {
+      const next: Record<string, string> = {};
+      for (const [minerId, deviceId] of Object.entries(prev)) {
+        const normalized = typeof deviceId === "string" ? deviceId.trim() : "";
+        if (!normalized || !stationAutomatSet.has(normalized)) continue;
+        next[minerId] = normalized;
+      }
+      return next;
+    });
+
+    if (!getAuthState()) return;
+    const syncInvalidBindings = async () => {
+      for (const minerId of invalidMinerIds) {
+        try {
+          const res = await fetch("/api/miners/bindings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ minerId, deviceId: null }),
+          });
+          const payload = (await res.json().catch(() => ({}))) as { error?: string };
+          if (!res.ok) {
+            throw new Error(payload.error ?? `Failed to clear invalid binding: ${res.status}`);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Unknown error";
+          pushClientNotification(message);
+        }
+      }
+    };
+    void syncInvalidBindings();
+  }, [
+    deyeAutomatsLoaded,
+    deyeStation?.stationId,
+    currentDeyeStationAutomatIds,
+    tuyaBindingByMiner,
+  ]);
+
+  const bindAutomatToCurrentDeyeStation = async (deviceId: string) => {
+    if (typeof deyeStation?.stationId !== "number" || !Number.isFinite(deyeStation.stationId)) {
+      pushClientNotification("Deye station is not available.");
+      return;
+    }
+    await saveDeyeStationAutomatBinding(deyeStation.stationId, deviceId, true);
+  };
+
+  const unbindAutomatFromCurrentDeyeStation = async (deviceId: string) => {
+    if (typeof deyeStation?.stationId !== "number" || !Number.isFinite(deyeStation.stationId)) {
+      pushClientNotification("Deye station is not available.");
+      return;
+    }
+    await saveDeyeStationAutomatBinding(deyeStation.stationId, deviceId, false);
+  };
 
   const reorderCard = (draggedId: string, targetId: string) => {
     if (!draggedId || !targetId || draggedId === targetId) return;
@@ -1776,6 +1975,11 @@ export function useHomeController() {
     deyeLoading,
     deyeCollapsed,
     setDeyeCollapsed,
+    currentDeyeStationAutomatIds,
+    deyeStationByDeviceId,
+    deyeAutomatsSaving,
+    bindAutomatToCurrentDeyeStation,
+    unbindAutomatFromCurrentDeyeStation,
     batteryMode,
     batteryModeLabel,
     batteryColor,
@@ -1789,6 +1993,7 @@ export function useHomeController() {
     hideUnboundAutomats,
     setHideUnboundAutomats,
     visibleTuyaDevices,
+    automatsTodayConsumptionKwh,
     deviceToMiner,
     tuyaBindingByMiner,
     pendingTuyaByDevice,

@@ -3,6 +3,8 @@ import type { NextRequest } from "next/server";
 import { getSettings, updateSettings } from "@/app/lib/settings";
 import { requireWebAuth } from "@/app/lib/web-auth";
 
+const FIXED_TUYA_SYNC_INTERVAL_SEC = 3600;
+
 export async function GET(request: NextRequest) {
   const auth = requireWebAuth(request);
   if (auth instanceof NextResponse) return auth;
@@ -11,7 +13,7 @@ export async function GET(request: NextRequest) {
     autoRestartEnabled: settings.autoRestartEnabled,
     minerSyncIntervalSec: settings.minerSyncIntervalSec,
     deyeSyncIntervalSec: settings.deyeSyncIntervalSec,
-    tuyaSyncIntervalSec: settings.tuyaSyncIntervalSec,
+    tuyaSyncIntervalSec: FIXED_TUYA_SYNC_INTERVAL_SEC,
     restartDelayMinutes: settings.restartDelayMinutes,
     postRestartGraceMinutes: settings.postRestartGraceMinutes,
     lowHashrateThresholdGh: settings.lowHashrateThresholdGh,
@@ -48,6 +50,9 @@ export async function PUT(request: NextRequest) {
     criticalBatteryOffPercent?: number;
   } = {};
 
+  // Tuya polling is fixed to once per hour.
+  payload.tuyaSyncIntervalSec = FIXED_TUYA_SYNC_INTERVAL_SEC;
+
   if (typeof body.autoRestartEnabled === "boolean") {
     payload.autoRestartEnabled = body.autoRestartEnabled;
   }
@@ -66,14 +71,6 @@ export async function PUT(request: NextRequest) {
     body.deyeSyncIntervalSec <= 3600
   ) {
     payload.deyeSyncIntervalSec = Math.floor(body.deyeSyncIntervalSec);
-  }
-  if (
-    typeof body.tuyaSyncIntervalSec === "number" &&
-    Number.isFinite(body.tuyaSyncIntervalSec) &&
-    body.tuyaSyncIntervalSec >= 5 &&
-    body.tuyaSyncIntervalSec <= 3600
-  ) {
-    payload.tuyaSyncIntervalSec = Math.floor(body.tuyaSyncIntervalSec);
   }
   if (
     typeof body.restartDelayMinutes === "number" &&
@@ -130,7 +127,7 @@ export async function PUT(request: NextRequest) {
     autoRestartEnabled: updated.autoRestartEnabled,
     minerSyncIntervalSec: updated.minerSyncIntervalSec,
     deyeSyncIntervalSec: updated.deyeSyncIntervalSec,
-    tuyaSyncIntervalSec: updated.tuyaSyncIntervalSec,
+    tuyaSyncIntervalSec: FIXED_TUYA_SYNC_INTERVAL_SEC,
     restartDelayMinutes: updated.restartDelayMinutes,
     postRestartGraceMinutes: updated.postRestartGraceMinutes,
     lowHashrateThresholdGh: updated.lowHashrateThresholdGh,

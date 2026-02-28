@@ -58,6 +58,7 @@ export async function GET(request: NextRequest) {
       boundTuyaDeviceId: string | null;
       autoPowerOffGenerationBelowKw: number | null;
       autoPowerOnGenerationAboveKw: number | null;
+      autoPowerOnWhenGenerationCoversConsumption: boolean;
       autoPowerOffBatteryBelowPercent: number | null;
       autoPowerOnBatteryAbovePercent: number | null;
       autoPowerRestoreDelayMinutes: number;
@@ -82,9 +83,10 @@ export async function GET(request: NextRequest) {
       boundTuyaDeviceId: miner.boundTuyaDeviceId ?? null,
       autoPowerOffGenerationBelowKw: miner.autoPowerOffGenerationBelowKw,
       autoPowerOnGenerationAboveKw: miner.autoPowerOnGenerationAboveKw,
+      autoPowerOnWhenGenerationCoversConsumption:
+        typeof miner.autoPowerOnGenerationAboveKw === "number",
       autoPowerOffBatteryBelowPercent: miner.autoPowerOffBatteryBelowPercent,
-      autoPowerOnBatteryAbovePercent:
-        miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent: miner.autoPowerOnBatteryAbovePercent,
       autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes,
       overheatProtectionEnabled: miner.overheatProtectionEnabled,
       overheatShutdownTempC: miner.overheatShutdownTempC,
@@ -121,9 +123,10 @@ export async function GET(request: NextRequest) {
         boundTuyaDeviceId: miner.boundTuyaDeviceId ?? null,
         autoPowerOffGenerationBelowKw: miner.autoPowerOffGenerationBelowKw ?? null,
         autoPowerOnGenerationAboveKw: miner.autoPowerOnGenerationAboveKw ?? null,
+        autoPowerOnWhenGenerationCoversConsumption:
+          typeof miner.autoPowerOnGenerationAboveKw === "number",
         autoPowerOffBatteryBelowPercent: miner.autoPowerOffBatteryBelowPercent ?? null,
-        autoPowerOnBatteryAbovePercent:
-          miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
+        autoPowerOnBatteryAbovePercent: miner.autoPowerOnBatteryAbovePercent ?? null,
         autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes ?? 10,
         overheatProtectionEnabled: miner.overheatProtectionEnabled ?? true,
         overheatShutdownTempC: miner.overheatShutdownTempC ?? 83,

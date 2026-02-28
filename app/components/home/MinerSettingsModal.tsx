@@ -24,8 +24,7 @@ type MinerSettingsPanel = {
   lowHashrateThresholdGh: number;
   autoPowerOnGridRestore: boolean;
   autoPowerOffGridLoss: boolean;
-  autoPowerOffGenerationBelowKw: number | null;
-  autoPowerOnGenerationAboveKw: number | null;
+  autoPowerOnWhenGenerationCoversConsumption: boolean;
   autoPowerOffBatteryBelowPercent: number | null;
   autoPowerOnBatteryAbovePercent: number | null;
   autoPowerRestoreDelayMinutes: number;
@@ -94,17 +93,6 @@ export function MinerSettingsModal({
     new Set([
       Math.min(100, batteryOffBase + 5),
       Math.min(100, batteryOffBase + 10),
-    ]),
-  ).sort((a, b) => a - b);
-
-  const generationOffBase =
-    typeof draft.autoPowerOffGenerationBelowKw === "number"
-      ? draft.autoPowerOffGenerationBelowKw
-      : 0;
-  const generationOnPresetValues = Array.from(
-    new Set([
-      generationOffBase + 4,
-      generationOffBase + 8,
     ]),
   ).sort((a, b) => a - b);
 
@@ -278,8 +266,8 @@ export function MinerSettingsModal({
                                   autoPowerOffBatteryBelowPercent: preset,
                                   autoPowerOnBatteryAbovePercent:
                                     typeof prev.autoPowerOnBatteryAbovePercent === "number" &&
-                                    prev.autoPowerOnBatteryAbovePercent < preset
-                                      ? preset
+                                    prev.autoPowerOnBatteryAbovePercent < preset + 5
+                                      ? preset + 5
                                       : prev.autoPowerOnBatteryAbovePercent,
                                 }
                               : prev,
@@ -311,11 +299,18 @@ export function MinerSettingsModal({
                           if (!prev) return prev;
                           const next =
                             e.target.value === "" ? null : Number.parseFloat(e.target.value || "0") || 0;
-                          const off = prev.autoPowerOffBatteryBelowPercent;
-                          if (typeof next === "number" && typeof off === "number" && next < off) {
-                            return { ...prev, autoPowerOnBatteryAbovePercent: off };
-                          }
                           return { ...prev, autoPowerOnBatteryAbovePercent: next };
+                        })
+                      }
+                      onBlur={() =>
+                        setDraft((prev) => {
+                          if (!prev) return prev;
+                          const off = prev.autoPowerOffBatteryBelowPercent;
+                          const on = prev.autoPowerOnBatteryAbovePercent;
+                          if (typeof on !== "number" || typeof off !== "number") return prev;
+                          const minAllowed = off + 5;
+                          if (on >= minAllowed) return prev;
+                          return { ...prev, autoPowerOnBatteryAbovePercent: minAllowed };
                         })
                       }
                     />
@@ -331,7 +326,7 @@ export function MinerSettingsModal({
                             if (!prev) return prev;
                             const off = prev.autoPowerOffBatteryBelowPercent;
                             const safePreset =
-                              typeof off === "number" ? Math.max(preset, off) : preset;
+                              typeof off === "number" ? Math.max(preset, off + 5) : preset;
                             return { ...prev, autoPowerOnBatteryAbovePercent: safePreset };
                           })
                         }
@@ -348,7 +343,7 @@ export function MinerSettingsModal({
                                   ...prev,
                                   autoPowerOnBatteryAbovePercent:
                                     typeof prev.autoPowerOffBatteryBelowPercent === "number"
-                                      ? prev.autoPowerOffBatteryBelowPercent
+                                      ? prev.autoPowerOffBatteryBelowPercent + 5
                                       : null,
                                 }
                               : prev,
@@ -363,98 +358,33 @@ export function MinerSettingsModal({
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
                   <Stack spacing={1.5}>
-                    <TextField
-                      type="number"
-                      label={t(uiLang, "auto_off_if_generation_below_kw")}
-                      placeholder={t(uiLang, "disabled")}
-                      value={draft.autoPowerOffGenerationBelowKw ?? ""}
-                      onChange={(e) =>
-                        setDraft((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                autoPowerOffGenerationBelowKw:
-                                  e.target.value === "" ? null : Number.parseFloat(e.target.value || "0") || 0,
-                              }
-                            : prev,
-                        )
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={draft.autoPowerOnWhenGenerationCoversConsumption}
+                          onChange={(e) =>
+                            setDraft((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    autoPowerOnWhenGenerationCoversConsumption: e.target.checked,
+                                  }
+                                : prev,
+                            )
+                          }
+                        />
                       }
+                      label={t(uiLang, "auto_on_when_generation_covers_consumption_and_battery_not_discharging")}
                     />
-                    <Stack
-                      direction="row"
-                      spacing={0.75}
-                      sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1.5 }}
-                    >
-                      <PresetButtons
-                        values={[5, 10]}
-                        onSelect={(preset) =>
-                          setDraft((prev) => (prev ? { ...prev, autoPowerOffGenerationBelowKw: preset } : prev))
-                        }
-                        format={(preset) => `${preset} kW`}
-                      />
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        color="inherit"
-                        onClick={() =>
-                          setDraft((prev) => (prev ? { ...prev, autoPowerOffGenerationBelowKw: null } : prev))
-                        }
-                        sx={{ borderRadius: 999 }}
-                      >
-                        {t(uiLang, "off_2")}
-                      </Button>
-                    </Stack>
-                    <Box sx={{ height: 10 }} />
-
-                    <TextField
-                      type="number"
-                      label={t(uiLang, "auto_on_if_generation_above_kw")}
-                      placeholder={t(uiLang, "disabled")}
-                      value={draft.autoPowerOnGenerationAboveKw ?? ""}
-                      onChange={(e) =>
-                        setDraft((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                autoPowerOnGenerationAboveKw:
-                                  e.target.value === "" ? null : Number.parseFloat(e.target.value || "0") || 0,
-                              }
-                            : prev,
-                        )
-                      }
-                    />
-                    <Stack direction="row" spacing={0.75}>
-                      <PresetButtons
-                        values={generationOnPresetValues}
-                        onSelect={(preset) =>
-                          setDraft((prev) => (prev ? { ...prev, autoPowerOnGenerationAboveKw: preset } : prev))
-                        }
-                        format={(preset) => `${preset} kW`}
-                      />
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        color="inherit"
-                        onClick={() =>
-                          setDraft((prev) => (prev ? { ...prev, autoPowerOnGenerationAboveKw: null } : prev))
-                        }
-                        sx={{ borderRadius: 999 }}
-                      >
-                        {t(uiLang, "off_2")}
-                      </Button>
-                    </Stack>
                   </Stack>
                 </Grid>
               </Grid>
 
               <Typography variant="caption" color="text.secondary">
-                {t(uiLang, "hint_if_both_generation_and_battery_thresholds_are_set_off_triggers_only_when_both_are_below_limits")}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
                 {t(uiLang, "hint_auto_on_battery_threshold_must_be_greater_or_equal_than_auto_off")}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {t(uiLang, "hint_auto_on_generation_threshold_has_priority_over_battery")}
+                {t(uiLang, "hint_auto_on_generation_cover_mode_requires_battery_not_discharging")}
               </Typography>
             </Stack>
           </Box>

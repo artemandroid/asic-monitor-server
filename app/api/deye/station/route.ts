@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { requireWebAuth } from "@/app/lib/web-auth";
 import { fetchDeyeStationSnapshot } from "@/app/lib/deye-client";
-import { saveDeyeEnergySample } from "@/app/lib/deye-energy";
+import { getDeyeEnergyTodaySummary, saveDeyeEnergySample } from "@/app/lib/deye-energy";
 
 export async function GET(request: NextRequest) {
   const auth = requireWebAuth(request);
@@ -10,7 +10,11 @@ export async function GET(request: NextRequest) {
   try {
     const parsed = await fetchDeyeStationSnapshot();
     await saveDeyeEnergySample(parsed);
-    return NextResponse.json(parsed);
+    const energyToday = await getDeyeEnergyTodaySummary();
+    return NextResponse.json({
+      ...parsed,
+      energyToday: energyToday ?? undefined,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unknown Deye API error" },

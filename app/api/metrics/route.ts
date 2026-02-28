@@ -5,6 +5,7 @@ import { requireAgentAuth } from "@/app/lib/auth";
 import { prisma } from "@/app/lib/prisma";
 import { getSettings } from "@/app/lib/settings";
 import { runPowerAutomation } from "@/app/lib/power-automation";
+import { ensureTuyaBackgroundRefresh } from "@/app/lib/tuya-background-refresh";
 import { commands, minerStates, notifications } from "@/app/lib/store";
 
 const NOTIFY_AUTO_RESTART = "AUTO_RESTART";
@@ -86,6 +87,7 @@ function formatBoardDriftMessage(minerId: string, drifts: BoardDrift[]): string 
 export async function POST(request: NextRequest) {
   const auth = requireAgentAuth(request);
   if (auth) return auth;
+  ensureTuyaBackgroundRefresh();
 
   let body: MinerMetric;
   try {

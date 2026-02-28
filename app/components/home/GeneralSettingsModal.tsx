@@ -79,16 +79,10 @@ export function GeneralSettingsModal({
 
           <TextField
             type="number"
-            inputProps={{ min: 5, max: 3600 }}
+            inputProps={{ min: 3600, max: 3600 }}
             label={t(uiLang, "tuya_sync_interval_seconds")}
             value={String(draft.tuyaSyncIntervalSec)}
-            onChange={(e) =>
-              setDraft((prev) =>
-                prev
-                  ? { ...prev, tuyaSyncIntervalSec: Math.max(5, Number.parseInt(e.target.value || "3600", 10) || 3600) }
-                  : prev,
-              )
-            }
+            disabled
           />
 
           <TextField

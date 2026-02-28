@@ -32,9 +32,10 @@ export async function GET(_: NextRequest, { params }: Params) {
       autoPowerOffGridLoss: miner.autoPowerOffGridLoss,
       autoPowerOffGenerationBelowKw: miner.autoPowerOffGenerationBelowKw ?? null,
       autoPowerOnGenerationAboveKw: miner.autoPowerOnGenerationAboveKw ?? null,
+      autoPowerOnWhenGenerationCoversConsumption:
+        typeof miner.autoPowerOnGenerationAboveKw === "number",
       autoPowerOffBatteryBelowPercent: miner.autoPowerOffBatteryBelowPercent ?? null,
-      autoPowerOnBatteryAbovePercent:
-        miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent: miner.autoPowerOnBatteryAbovePercent ?? null,
       autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes,
       overheatProtectionEnabled: miner.overheatProtectionEnabled,
       overheatShutdownTempC: miner.overheatShutdownTempC ?? 83,
@@ -62,9 +63,10 @@ export async function GET(_: NextRequest, { params }: Params) {
       autoPowerOffGridLoss: miner.autoPowerOffGridLoss ?? false,
       autoPowerOffGenerationBelowKw: miner.autoPowerOffGenerationBelowKw ?? null,
       autoPowerOnGenerationAboveKw: miner.autoPowerOnGenerationAboveKw ?? null,
+      autoPowerOnWhenGenerationCoversConsumption:
+        typeof miner.autoPowerOnGenerationAboveKw === "number",
       autoPowerOffBatteryBelowPercent: miner.autoPowerOffBatteryBelowPercent ?? null,
-      autoPowerOnBatteryAbovePercent:
-        miner.autoPowerOnBatteryAbovePercent ?? miner.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent: miner.autoPowerOnBatteryAbovePercent ?? null,
       autoPowerRestoreDelayMinutes: miner.autoPowerRestoreDelayMinutes ?? 10,
       overheatProtectionEnabled: miner.overheatProtectionEnabled ?? true,
       overheatShutdownTempC: miner.overheatShutdownTempC ?? 83,
@@ -97,6 +99,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     autoPowerOffGridLoss?: boolean;
     autoPowerOffGenerationBelowKw?: number | null;
     autoPowerOnGenerationAboveKw?: number | null;
+    autoPowerOnWhenGenerationCoversConsumption?: boolean;
     autoPowerOffBatteryBelowPercent?: number | null;
     autoPowerOnBatteryAbovePercent?: number | null;
     autoPowerRestoreDelayMinutes?: number;
@@ -151,6 +154,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
     body.autoPowerOnGenerationAboveKw >= 0
   ) {
     patch.autoPowerOnGenerationAboveKw = body.autoPowerOnGenerationAboveKw;
+  }
+  if (typeof body.autoPowerOnWhenGenerationCoversConsumption === "boolean") {
+    patch.autoPowerOnWhenGenerationCoversConsumption = body.autoPowerOnWhenGenerationCoversConsumption;
+    patch.autoPowerOnGenerationAboveKw =
+      body.autoPowerOnWhenGenerationCoversConsumption ? 1 : null;
   }
   if (
     body.autoPowerOffBatteryBelowPercent === null ||
@@ -223,22 +231,22 @@ export async function PUT(request: NextRequest, { params }: Params) {
       patch.autoPowerOnBatteryAbovePercent === undefined
         ? current.autoPowerOnBatteryAbovePercent
         : patch.autoPowerOnBatteryAbovePercent;
-    const effectiveOn =
-      effectiveOnRaw ?? effectiveOff ?? null;
     if (
       typeof effectiveOff === "number" &&
-      typeof effectiveOn === "number" &&
-      effectiveOn < effectiveOff
+      typeof effectiveOnRaw === "number" &&
+      effectiveOnRaw < effectiveOff + 5
     ) {
       return NextResponse.json(
-        { error: "Auto ON battery threshold must be greater than or equal to Auto OFF threshold." },
+        { error: "Auto ON battery threshold must be at least Auto OFF threshold + 5%." },
         { status: 400 },
       );
     }
 
+    const dbPatch = { ...patch };
+    delete dbPatch.autoPowerOnWhenGenerationCoversConsumption;
     const updated = await prisma.miner.update({
       where: { id },
-      data: patch,
+      data: dbPatch,
     });
     return NextResponse.json({
       minerId: updated.id,
@@ -249,9 +257,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
       autoPowerOffGridLoss: updated.autoPowerOffGridLoss,
       autoPowerOffGenerationBelowKw: updated.autoPowerOffGenerationBelowKw ?? null,
       autoPowerOnGenerationAboveKw: updated.autoPowerOnGenerationAboveKw ?? null,
+      autoPowerOnWhenGenerationCoversConsumption:
+        typeof updated.autoPowerOnGenerationAboveKw === "number",
       autoPowerOffBatteryBelowPercent: updated.autoPowerOffBatteryBelowPercent ?? null,
-      autoPowerOnBatteryAbovePercent:
-        updated.autoPowerOnBatteryAbovePercent ?? updated.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent: updated.autoPowerOnBatteryAbovePercent ?? null,
       autoPowerRestoreDelayMinutes: updated.autoPowerRestoreDelayMinutes,
       overheatProtectionEnabled: updated.overheatProtectionEnabled,
       overheatShutdownTempC: updated.overheatShutdownTempC ?? 83,
@@ -278,6 +287,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       boundTuyaDeviceId: null,
       autoPowerOffGenerationBelowKw: null,
       autoPowerOnGenerationAboveKw: null,
+      autoPowerOnWhenGenerationCoversConsumption: false,
       autoPowerOffBatteryBelowPercent: null,
       autoPowerOnBatteryAbovePercent: null,
       autoPowerRestoreDelayMinutes: 10,
@@ -316,6 +326,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
     ) {
       existing.autoPowerOnGenerationAboveKw = patch.autoPowerOnGenerationAboveKw;
     }
+    if (typeof patch.autoPowerOnWhenGenerationCoversConsumption === "boolean") {
+      existing.autoPowerOnWhenGenerationCoversConsumption =
+        patch.autoPowerOnWhenGenerationCoversConsumption;
+    }
     if (
       patch.autoPowerOffBatteryBelowPercent === null ||
       typeof patch.autoPowerOffBatteryBelowPercent === "number"
@@ -330,15 +344,13 @@ export async function PUT(request: NextRequest, { params }: Params) {
       patch.autoPowerOnBatteryAbovePercent === undefined
         ? existing.autoPowerOnBatteryAbovePercent ?? null
         : patch.autoPowerOnBatteryAbovePercent;
-    const effectiveOn =
-      effectiveOnRaw ?? effectiveOff ?? null;
     if (
       typeof effectiveOff === "number" &&
-      typeof effectiveOn === "number" &&
-      effectiveOn < effectiveOff
+      typeof effectiveOnRaw === "number" &&
+      effectiveOnRaw < effectiveOff + 5
     ) {
       return NextResponse.json(
-        { error: "Auto ON battery threshold must be greater than or equal to Auto OFF threshold." },
+        { error: "Auto ON battery threshold must be at least Auto OFF threshold + 5%." },
         { status: 400 },
       );
     }
@@ -370,9 +382,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
       autoPowerOffGridLoss: existing.autoPowerOffGridLoss ?? false,
       autoPowerOffGenerationBelowKw: existing.autoPowerOffGenerationBelowKw ?? null,
       autoPowerOnGenerationAboveKw: existing.autoPowerOnGenerationAboveKw ?? null,
+      autoPowerOnWhenGenerationCoversConsumption:
+        typeof existing.autoPowerOnGenerationAboveKw === "number",
       autoPowerOffBatteryBelowPercent: existing.autoPowerOffBatteryBelowPercent ?? null,
-      autoPowerOnBatteryAbovePercent:
-        existing.autoPowerOnBatteryAbovePercent ?? existing.autoPowerOffBatteryBelowPercent ?? null,
+      autoPowerOnBatteryAbovePercent: existing.autoPowerOnBatteryAbovePercent ?? null,
       autoPowerRestoreDelayMinutes: existing.autoPowerRestoreDelayMinutes ?? 10,
       overheatProtectionEnabled: existing.overheatProtectionEnabled ?? true,
       overheatShutdownTempC: existing.overheatShutdownTempC ?? 83,

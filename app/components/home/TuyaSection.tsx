@@ -30,6 +30,8 @@ type TuyaDevice = {
   on: boolean | null;
   switchCode: string | null;
   powerW: number | null;
+  energyTodayKwh: number | null;
+  energyTotalKwh: number | null;
   category: string | null;
   productName: string | null;
 };
@@ -49,6 +51,7 @@ type TuyaSectionProps = {
   hideUnboundAutomats: boolean;
   visibleTuyaDevices: TuyaDevice[];
   deviceToMiner: Map<string, string>;
+  deyeStationByDeviceId: Record<string, string>;
   tuyaBindingByMiner: Record<string, string>;
   pendingTuyaByDevice: Record<string, "ON" | "OFF" | undefined>;
   orderedMiners: MinerState[];
@@ -70,6 +73,7 @@ export function TuyaSection({
   hideUnboundAutomats,
   visibleTuyaDevices,
   deviceToMiner,
+  deyeStationByDeviceId,
   tuyaBindingByMiner,
   pendingTuyaByDevice,
   orderedMiners,
@@ -105,6 +109,12 @@ export function TuyaSection({
     py: 0.45,
     px: 1,
   } as const;
+  const totalTodayKwh = (tuyaData?.devices ?? []).reduce(
+    (sum, d) => sum + (typeof d.energyTodayKwh === "number" ? d.energyTodayKwh : 0),
+    0,
+  );
+  const formatKwh = (value: number | null | undefined) =>
+    typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)} kWh` : "-";
 
   return (
     <Paper sx={{ p: 1.25, mb: 1.25 }}>
@@ -119,7 +129,7 @@ export function TuyaSection({
         <Stack direction="row" spacing={1} alignItems="center" minWidth={0}>
           <AppsRoundedIcon sx={{ fontSize: 18, color: "info.light", flexShrink: 0 }} />
           <Typography variant="subtitle2" fontWeight={800}>
-            {t(uiLang, "smartlife_automats")} ({visibleTuyaDevices.length}/{tuyaData?.total ?? tuyaData?.devices.length ?? 0})
+            {t(uiLang, "smartlife_automats")} ({t(uiLang, "today_kwh")}: {totalTodayKwh.toFixed(2)} kWh)
           </Typography>
 
           {tuyaCollapsed && (
@@ -177,6 +187,8 @@ export function TuyaSection({
                 <TableCell sx={compactCellSx}>{t(uiLang, "automat")}</TableCell>
                 <TableCell align="center" sx={compactCellSx}>{t(uiLang, "st")}</TableCell>
                 <TableCell align="center" sx={compactCellSx}>{t(uiLang, "pwr")}</TableCell>
+                <TableCell align="center" sx={compactCellSx}>{t(uiLang, "today_kwh")}</TableCell>
+                <TableCell align="center" sx={compactCellSx}>{t(uiLang, "deye_station")}</TableCell>
                 <TableCell align="center" sx={compactCellSx}>{t(uiLang, "bind_asic")}</TableCell>
                 <TableCell align="center" sx={compactCellSx}>{t(uiLang, "ctrl")}</TableCell>
               </TableRow>
@@ -184,7 +196,7 @@ export function TuyaSection({
             <TableBody>
               {visibleTuyaDevices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} sx={{ ...compactCellSx, color: "text.secondary" }}>
+                  <TableCell colSpan={7} sx={{ ...compactCellSx, color: "text.secondary" }}>
                     {t(uiLang, "no_devices_yet")}
                   </TableCell>
                 </TableRow>
@@ -221,9 +233,30 @@ export function TuyaSection({
                         {typeof device.powerW === "number" ? `${device.powerW.toFixed(0)}W` : "-"}
                       </TableCell>
                       <TableCell align="center" sx={compactCellSx}>
-                        <FormControl size="small" sx={{ minWidth: 150 }}>
+                        {formatKwh(device.energyTodayKwh)}
+                      </TableCell>
+                      <TableCell align="center" sx={compactCellSx}>
+                        <Typography variant="body2" noWrap maxWidth={140}>
+                          {deyeStationByDeviceId[device.id] ?? "-"}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="center" sx={{ ...compactCellSx, minWidth: 260 }}>
+                        <FormControl size="small" sx={{ width: 260 }}>
                           <Select
                             value={linkedMinerId}
+                            displayEmpty
+                            sx={{ width: "100%" }}
+                            renderValue={(selected) => {
+                              const minerId = String(selected ?? "");
+                              if (!minerId) {
+                                return (
+                                  <Typography variant="body2" color="text.disabled">
+                                    {t(uiLang, "choose_miner")}
+                                  </Typography>
+                                );
+                              }
+                              return minerAliases[minerId]?.trim() || minerId;
+                            }}
                             onChange={(e) => {
                               const targetMiner = e.target.value || null;
                               const oldMinerId =
@@ -236,10 +269,14 @@ export function TuyaSection({
                               }
                             }}
                           >
-                            <MenuItem value="">-</MenuItem>
+                            <MenuItem value="">
+                              <Typography variant="body2" color="text.disabled">
+                                {t(uiLang, "choose_miner")}
+                              </Typography>
+                            </MenuItem>
                             {orderedMiners.map((m) => (
                               <MenuItem key={`${device.id}-miner-${m.minerId}`} value={m.minerId}>
-                                {(minerAliases[m.minerId]?.trim() || m.minerId).slice(0, 24)}
+                                {minerAliases[m.minerId]?.trim() || m.minerId}
                               </MenuItem>
                             ))}
                           </Select>
@@ -279,7 +316,7 @@ export function TuyaSection({
           </Table>
         </TableContainer>
 
-        <Box sx={{ mt: 0.75, display: "flex", justifyContent: "flex-end" }}>
+        <Box sx={{ mt: 0.75, display: "flex", justifyContent: "flex-start" }}>
           <FormControlLabel
             control={<Switch checked={hideUnboundAutomats} onChange={(e) => onToggleHideUnbound(e.target.checked)} />}
             label={t(uiLang, "hide_unbinded_automats")}

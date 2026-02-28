@@ -1,7 +1,11 @@
 import SolarPowerRoundedIcon from "@mui/icons-material/SolarPowerRounded";
+import { useMemo, useState } from "react";
 import {
   Box,
+  Button,
   Chip,
+  Menu,
+  MenuItem,
   Paper,
   Stack,
   Typography,
@@ -71,6 +75,10 @@ type DeyeStationSectionProps = {
   deyeStation: DeyeStationSnapshot | null;
   deyeLoading: boolean;
   deyeCollapsed: boolean;
+  automatsTodayConsumptionKwh: number;
+  tuyaDevices: Array<{ id: string; name: string }>;
+  stationAutomatIds: string[];
+  deyeAutomatsSaving: boolean;
   batteryMode: string;
   batteryModeLabel: string;
   batteryColor: string;
@@ -78,6 +86,8 @@ type DeyeStationSectionProps = {
   kwUnit: string;
   formatUpdatedAt: (iso?: string | null) => string;
   onToggleCollapsed: () => void;
+  onBindAutomat: (deviceId: string) => void;
+  onUnbindAutomat: (deviceId: string) => void;
 };
 
 function BatteryPill({
@@ -131,6 +141,10 @@ export function DeyeStationSection({
   deyeStation,
   deyeLoading,
   deyeCollapsed,
+  automatsTodayConsumptionKwh,
+  tuyaDevices,
+  stationAutomatIds,
+  deyeAutomatsSaving,
   batteryMode,
   batteryModeLabel,
   batteryColor,
@@ -138,8 +152,11 @@ export function DeyeStationSection({
   kwUnit,
   formatUpdatedAt,
   onToggleCollapsed,
+  onBindAutomat,
+  onUnbindAutomat,
 }: DeyeStationSectionProps) {
   const theme = useTheme();
+  const [addAutomatAnchorEl, setAddAutomatAnchorEl] = useState<HTMLElement | null>(null);
   const neutralGray = theme.palette.custom.deyeNeutralGray;
   const fullBlue = theme.palette.custom.deyeFullBlue;
   const negativeRed = theme.palette.custom.deyeNegativeRed;
@@ -155,15 +172,6 @@ export function DeyeStationSection({
   const gridStatusVariant: "filled" | "outlined" =
     deyeStation?.gridOnline === true ? "filled" : "outlined";
 
-  const signalRows = (deyeStation?.apiSignals ?? []).map((signal) => ({
-    key: signal.key,
-    value:
-      signal.value === null
-        ? "null"
-        : typeof signal.value === "boolean"
-          ? signal.value ? "true" : "false"
-        : String(signal.value),
-  }));
   const batteryPowerKw = deyeStation?.batteryDischargePowerKw ?? null;
   const showBatteryPower =
     typeof batteryPowerKw === "number" && Number.isFinite(batteryPowerKw) && Math.abs(batteryPowerKw) > 0.01;
@@ -187,8 +195,20 @@ export function DeyeStationSection({
   const hasGeneration =
     typeof generationKw === "number" && Number.isFinite(generationKw) && generationKw > 0.01;
   const generationLabelColor = hasGeneration ? fullBlue : neutralGray;
+  const generatedTodayKwh = deyeStation?.energyToday?.generationKwh;
+  const generatedTodayText =
+    typeof generatedTodayKwh === "number" && Number.isFinite(generatedTodayKwh)
+      ? `${generatedTodayKwh.toFixed(2)} kWh`
+      : "-";
+  const economyPercentText =
+    typeof generatedTodayKwh === "number" &&
+    Number.isFinite(generatedTodayKwh) &&
+    automatsTodayConsumptionKwh > 0
+      ? `${Math.min(100, (generatedTodayKwh / automatsTodayConsumptionKwh) * 100).toFixed(1)}%`
+      : "-";
 
   const gridPowerKw = deyeStation?.gridPowerKw ?? null;
+  const showGridFlow = deyeStation?.gridOnline !== false;
   const isGridImport =
     typeof gridPowerKw === "number" ? gridPowerKw > 0.01 : false;
   const gridPowerLabel =
@@ -196,6 +216,21 @@ export function DeyeStationSection({
       ? t(uiLang, "grid_import_power")
       : t(uiLang, "grid_export_power");
   const gridLabelColor = isGridImport ? negativeRed : fullBlue;
+  const stationAutomatSet = useMemo(() => new Set(stationAutomatIds), [stationAutomatIds]);
+  const availableAutomats = tuyaDevices.filter((device) => !stationAutomatSet.has(device.id));
+  const tuyaDeviceById = useMemo(
+    () => new Map(tuyaDevices.map((device) => [device.id, device])),
+    [tuyaDevices],
+  );
+  const stationTitle =
+    typeof deyeStation?.stationId === "number" && Number.isFinite(deyeStation.stationId)
+      ? String(Math.trunc(deyeStation.stationId))
+      : "-";
+  const stationAutomatsHeader =
+    stationTitle !== "-"
+      ? `${t(uiLang, "station_automats")} #${stationTitle}:`
+      : `${t(uiLang, "station_automats")}:`;
+  const addAutomatMenuOpen = Boolean(addAutomatAnchorEl);
 
   return (
     <Paper sx={{ p: 1.25, mb: 1.25 }}>
@@ -210,7 +245,7 @@ export function DeyeStationSection({
         <Stack direction="row" alignItems="center" spacing={1.2} minWidth={0}>
           <SolarPowerRoundedIcon sx={{ fontSize: 18, color: "warning.light", flexShrink: 0 }} />
           <Typography variant="subtitle2" fontWeight={800}>
-            {t(uiLang, "deye_station")} {deyeStation?.stationId ? `#${deyeStation.stationId}` : ""}
+            {t(uiLang, "deye_station")} ({t(uiLang, "today_kwh")}: {generatedTodayText} | {t(uiLang, "economy")}: {economyPercentText})
           </Typography>
           <Stack
             direction="row"
@@ -296,31 +331,33 @@ export function DeyeStationSection({
                 </Typography>
               </Box>
             ) : null}
-            <Box
-              sx={{
-                px: 0.9,
-                py: 0.35,
-                borderRadius: 1.2,
-                border: `1px solid ${gridLabelColor}`,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.6,
-              }}
-            >
-              <Typography variant="body2" sx={{ color: gridLabelColor }} noWrap>
-                {gridPowerLabel}:
-              </Typography>
-              <Typography
-                variant="body2"
+            {showGridFlow ? (
+              <Box
                 sx={{
-                  color: valueTextColor,
-                  fontWeight: 500,
+                  px: 0.9,
+                  py: 0.35,
+                  borderRadius: 1.2,
+                  border: `1px solid ${gridLabelColor}`,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 0.6,
                 }}
-                noWrap
               >
-                {typeof gridPowerKw === "number" ? `${Math.abs(gridPowerKw).toFixed(2)} ${kwUnit}` : "-"}
-              </Typography>
-            </Box>
+                <Typography variant="body2" sx={{ color: gridLabelColor }} noWrap>
+                  {gridPowerLabel}:
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: valueTextColor,
+                    fontWeight: 500,
+                  }}
+                  noWrap
+                >
+                  {typeof gridPowerKw === "number" ? `${Math.abs(gridPowerKw).toFixed(2)} ${kwUnit}` : "-"}
+                </Typography>
+              </Box>
+            ) : null}
           </Stack>
         </Stack>
 
@@ -336,50 +373,98 @@ export function DeyeStationSection({
         </Stack>
       </Stack>
 
+      {!deyeCollapsed ? (
+        <Box
+          sx={{
+            mt: 0.85,
+            pt: 0.85,
+            borderTop: (themeCtx) => `1px dashed ${themeCtx.palette.divider}`,
+          }}
+        >
+          <Typography variant="caption" sx={{ color: "text.primary", fontWeight: 700 }}>
+            {stationAutomatsHeader}
+          </Typography>
+          <Stack
+            direction="row"
+            spacing={0.6}
+            useFlexGap
+            flexWrap="wrap"
+            alignItems="center"
+            sx={{ mt: 0.7 }}
+          >
+            {stationAutomatIds.map((deviceId) => (
+              <Chip
+                key={`deye-station-bound-${deviceId}`}
+                size="small"
+                label={tuyaDeviceById.get(deviceId)?.name ?? deviceId}
+                onDelete={
+                  deyeAutomatsSaving
+                    ? undefined
+                    : () => {
+                        onUnbindAutomat(deviceId);
+                      }
+                }
+              />
+            ))}
+            <Button
+              variant="contained"
+              size="small"
+              sx={{
+                minWidth: 24,
+                width: 24,
+                height: 24,
+                minHeight: 24,
+                p: 0,
+                lineHeight: 1,
+                fontSize: 16,
+                fontWeight: 800,
+                borderRadius: 999,
+                alignSelf: "center",
+                bgcolor: "info.main",
+                color: "common.white",
+                "&:hover": { bgcolor: "info.dark" },
+              }}
+              disabled={deyeAutomatsSaving || availableAutomats.length === 0}
+              onClick={(event) => {
+                setAddAutomatAnchorEl((prev) => (prev ? null : event.currentTarget));
+              }}
+            >
+              +
+            </Button>
+            <Menu
+              anchorEl={addAutomatAnchorEl}
+              open={addAutomatMenuOpen}
+              onClose={() => setAddAutomatAnchorEl(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+            >
+              {availableAutomats.map((device) => (
+                <MenuItem
+                  key={`deye-station-automat-pick-${device.id}`}
+                  onClick={() => {
+                    onBindAutomat(device.id);
+                    setAddAutomatAnchorEl(null);
+                  }}
+                >
+                  {device.name}
+                </MenuItem>
+              ))}
+            </Menu>
+          </Stack>
+          {stationAutomatIds.length === 0 ? (
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.6, display: "block" }}>
+              {t(uiLang, "no_station_automats_bound")}
+            </Typography>
+          ) : null}
+        </Box>
+      ) : null}
+
       {!deyeCollapsed && deyeStation?.error ? (
         <Typography variant="caption" color="error.main" sx={{ mt: 0.75, display: "block" }}>
           {t(uiLang, "deye_api_error")}: {deyeStation.error}
         </Typography>
       ) : null}
 
-      {!deyeCollapsed && signalRows.length > 0 ? (
-        <Box
-          sx={{
-            mt: 0.9,
-            pt: 0.85,
-            borderTop: (theme) => `1px dashed ${theme.palette.divider}`,
-          }}
-        >
-          <Typography variant="caption" sx={{ color: "text.primary", fontWeight: 700 }}>
-            {t(uiLang, "api_signals")} ({signalRows.length})
-          </Typography>
-          <Box
-            sx={{
-              mt: 0.5,
-              display: "grid",
-              gap: 0.4,
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            }}
-          >
-            {signalRows.map((signal) => (
-              <Typography
-                key={signal.key}
-                variant="caption"
-                sx={{
-                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                  color: "text.secondary",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-                title={`${signal.key}=${signal.value}`}
-              >
-                {signal.key}: <Box component="span" sx={{ color: "text.primary" }}>{signal.value}</Box>
-              </Typography>
-            ))}
-          </Box>
-        </Box>
-      ) : null}
     </Paper>
   );
 }

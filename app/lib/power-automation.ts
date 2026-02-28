@@ -1,15 +1,16 @@
 import { prisma } from "@/app/lib/prisma";
 import { fetchDeyeStationSnapshot } from "@/app/lib/deye-client";
-import { getTuyaSnapshotCached } from "@/app/lib/tuya-cache";
+import { getTuyaSnapshotCached, patchTuyaDeviceSwitchState } from "@/app/lib/tuya-cache";
 import { setTuyaSwitch } from "@/app/lib/tuya-client";
 import { getSettings } from "@/app/lib/settings";
 import { saveDeyeEnergySample } from "@/app/lib/deye-energy";
 
 const POWER_AUTOMATION_DEBOUNCE_MS = 45_000;
 const POWER_AUTOMATION_MIN_RUN_INTERVAL_MS = 15_000;
-const AUTO_ON_MIN_BATTERY_PERCENT = 60;
 const DEFAULT_CRITICAL_OFF_BATTERY_PERCENT = 30;
 const DEFAULT_OVERHEAT_SLEEP_MINUTES = 30;
+const GENERATION_COVER_TOLERANCE_KW = 0.2;
+const BATTERY_NOT_DISCHARGING_MAX_KW = 0.05;
 const COMMAND_SLEEP = "SLEEP";
 const COMMAND_WAKE = "WAKE";
 const NOTIFY_POWER_AUTOMATION = "POWER_AUTOMATION";
@@ -131,7 +132,6 @@ export async function runPowerAutomation(): Promise<void> {
           boundTuyaDeviceId: true,
           autoPowerOnGridRestore: true,
           autoPowerOffGridLoss: true,
-          autoPowerOffGenerationBelowKw: true,
           autoPowerOnGenerationAboveKw: true,
           autoPowerOffBatteryBelowPercent: true,
           autoPowerOnBatteryAbovePercent: true,
@@ -168,7 +168,6 @@ export async function runPowerAutomation(): Promise<void> {
     const devicesById = new Map(tuya.devices.map((d) => [d.id, d]));
     const now = Date.now();
 
-    let didApplyTuyaCommand = false;
     for (const miner of miners) {
       const deviceId = miner.boundTuyaDeviceId ?? "";
       const hasBoundDevice = Boolean(deviceId);
@@ -187,28 +186,32 @@ export async function runPowerAutomation(): Promise<void> {
         Math.floor(miner.overheatSleepMinutes ?? DEFAULT_OVERHEAT_SLEEP_MINUTES),
       );
       const overheatSleepDurationMs = overheatSleepMinutes * 60 * 1000;
-      const generationConfigured = typeof miner.autoPowerOffGenerationBelowKw === "number";
       const generationAutoOnConfigured = typeof miner.autoPowerOnGenerationAboveKw === "number";
-      const generationTooLowForAutoOnRaw =
+      const generationCoversConsumption =
+        typeof station.generationPowerKw === "number" &&
+        typeof station.consumptionPowerKw === "number" &&
+        station.generationPowerKw >= station.consumptionPowerKw - GENERATION_COVER_TOLERANCE_KW;
+      const batteryNotDischarging =
+        typeof station.batteryDischargePowerKw === "number" &&
+        station.batteryDischargePowerKw <= BATTERY_NOT_DISCHARGING_MAX_KW;
+      const generationAutoOnReadyRaw =
         generationAutoOnConfigured &&
-        (
-          station.generationPowerKw === null ||
-          station.generationPowerKw < (miner.autoPowerOnGenerationAboveKw ?? 0)
-        );
-      // Auto-ON generation threshold is relevant only when grid is unavailable.
+        generationCoversConsumption &&
+        batteryNotDischarging;
+      // This auto-ON mode is relevant only when grid is unavailable.
       // When grid is back, we should not block power restore by generation checks.
-      const generationTooLowForAutoOn = gridNow === true ? false : generationTooLowForAutoOnRaw;
+      const generationAutoOnReady = gridNow === true ? true : generationAutoOnReadyRaw;
       const batteryConfigured = typeof miner.autoPowerOffBatteryBelowPercent === "number";
+      const batteryAtOrBelowOffThreshold =
+        batteryConfigured &&
+        station.batterySoc !== null &&
+        station.batterySoc <= (miner.autoPowerOffBatteryBelowPercent ?? 0);
+      const batteryAutoOnConfigured =
+        typeof miner.autoPowerOnBatteryAbovePercent === "number";
       const batteryAutoOnThreshold =
-        typeof miner.autoPowerOnBatteryAbovePercent === "number"
+        batteryAutoOnConfigured
           ? miner.autoPowerOnBatteryAbovePercent
-          : typeof miner.autoPowerOffBatteryBelowPercent === "number"
-            ? miner.autoPowerOffBatteryBelowPercent
-            : null;
-      const shouldOffByGeneration =
-        generationConfigured &&
-        station.generationPowerKw !== null &&
-        station.generationPowerKw < (miner.autoPowerOffGenerationBelowKw ?? 0);
+          : null;
       const shouldOffByBattery =
         batteryConfigured &&
         station.batterySoc !== null &&
@@ -217,19 +220,16 @@ export async function runPowerAutomation(): Promise<void> {
       const shouldOffByGridLoss =
         shouldOffByGridLossRaw &&
         (
-          (!batteryConfigured && !generationConfigured) ||
-          (batteryConfigured ? shouldOffByBattery : true) &&
-            (generationConfigured ? shouldOffByGeneration : true)
+          !batteryConfigured ||
+          shouldOffByBattery
         );
       // Threshold-based shutdown logic:
       // 1) Works only when grid is OFF.
       // 2) Battery threshold is mandatory trigger.
-      // 3) If generation threshold is configured, it must also be below threshold.
       const shouldOffByThreshold =
         gridOffline &&
         batteryConfigured &&
-        shouldOffByBattery &&
-        (!generationConfigured || shouldOffByGeneration);
+        shouldOffByBattery;
       const shouldOff =
         shouldOffByCriticalBattery ||
         shouldOffByGridLoss ||
@@ -238,26 +238,34 @@ export async function runPowerAutomation(): Promise<void> {
         delete state.autoOffRequestedByMiner[miner.id];
       }
 
+      // Grid has absolute priority for power restore: when grid is available,
+      // restore power regardless of battery/generation settings.
       const shouldOnImmediate =
         !overheatLocked &&
-        miner.autoPowerOnGridRestore === true &&
         (gridRestored || initialGridOnline);
       const shouldOnWhenGridOnline =
         !overheatLocked &&
-        miner.autoPowerOnGridRestore === true &&
-        gridNow === true &&
-        !shouldOff;
+        gridNow === true;
       const batteryTooLowForAutoOn =
+        batteryAutoOnConfigured &&
         typeof station.batterySoc === "number" &&
         station.batterySoc <
-          (typeof batteryAutoOnThreshold === "number"
-            ? batteryAutoOnThreshold
-            : AUTO_ON_MIN_BATTERY_PERCENT);
+          (batteryAutoOnThreshold ?? 0);
       const batteryBlocksAutoOnRaw =
         !generationAutoOnConfigured && batteryTooLowForAutoOn && !wirePowerNonZero;
       // When grid is back, battery constraints should not block auto power restore.
       const batteryBlocksAutoOn = gridNow === true ? false : batteryBlocksAutoOnRaw;
-      const autoOnBlocked = generationTooLowForAutoOn || batteryBlocksAutoOn;
+      const generationBlocksAutoOn = generationAutoOnConfigured && !generationAutoOnReady;
+      // Safety for generation-cover mode: when grid is unavailable, never auto-ON
+      // while SOC is already in auto-OFF battery zone.
+      const batteryOffSafetyBlocksGenerationAutoOn =
+        gridNow !== true &&
+        generationAutoOnConfigured &&
+        batteryAtOrBelowOffThreshold;
+      const autoOnBlocked =
+        generationBlocksAutoOn ||
+        batteryBlocksAutoOn ||
+        batteryOffSafetyBlocksGenerationAutoOn;
 
       // Overheat scenario: sleep miner for 30 minutes, then auto-wake.
       if (overheatLocked) {
@@ -341,7 +349,7 @@ export async function runPowerAutomation(): Promise<void> {
             delete state.thresholdAutoOffAtByMiner[miner.id];
           }
           await setTuyaSwitch(device.id, false, device.switchCode);
-          didApplyTuyaCommand = true;
+          await patchTuyaDeviceSwitchState(device.id, false);
           if (shouldOffByCriticalBattery) {
             await notify(
               `Auto OFF requested for ${device.name}: grid is OFF and battery < ${criticalOffBatteryPercent}%.`,
@@ -378,7 +386,7 @@ export async function runPowerAutomation(): Promise<void> {
           state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
           delete state.thresholdAutoOffAtByMiner[miner.id];
           await setTuyaSwitch(device.id, true, device.switchCode);
-          didApplyTuyaCommand = true;
+          await patchTuyaDeviceSwitchState(device.id, true);
           await notify(`Auto ON requested for ${device.name} because grid is available.`, miner.id);
         }
         continue;
@@ -402,7 +410,7 @@ export async function runPowerAutomation(): Promise<void> {
             state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
             delete state.thresholdAutoOffAtByMiner[miner.id];
             await setTuyaSwitch(device.id, true, device.switchCode);
-            didApplyTuyaCommand = true;
+            await patchTuyaDeviceSwitchState(device.id, true);
             await notify(
               `Auto ON requested for ${device.name} after threshold recovery delay.`,
               miner.id,
@@ -414,10 +422,6 @@ export async function runPowerAutomation(): Promise<void> {
       if (!shouldOffByThreshold && device.on === true) {
         delete state.thresholdAutoOffAtByMiner[miner.id];
       }
-    }
-
-    if (didApplyTuyaCommand) {
-      await getTuyaSnapshotCached({ force: true, maxAgeMs: 0 });
     }
   } catch {
     // ignore power automation failures; they are surfaced by UI fetchers if needed.

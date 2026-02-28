@@ -112,6 +112,10 @@ function Home() {
               deyeStation={home.deyeStation}
               deyeLoading={home.deyeLoading}
               deyeCollapsed={home.deyeCollapsed}
+              automatsTodayConsumptionKwh={home.automatsTodayConsumptionKwh}
+              tuyaDevices={home.tuyaData?.devices ?? []}
+              stationAutomatIds={home.currentDeyeStationAutomatIds}
+              deyeAutomatsSaving={home.deyeAutomatsSaving}
               batteryMode={home.batteryMode}
               batteryModeLabel={home.batteryModeLabel}
               batteryColor={home.batteryColor}
@@ -119,6 +123,12 @@ function Home() {
               kwUnit={home.kwUnit}
               formatUpdatedAt={home.formatUpdatedAt}
               onToggleCollapsed={() => home.setDeyeCollapsed((prev) => !prev)}
+              onBindAutomat={(deviceId) => {
+                void home.bindAutomatToCurrentDeyeStation(deviceId);
+              }}
+              onUnbindAutomat={(deviceId) => {
+                void home.unbindAutomatFromCurrentDeyeStation(deviceId);
+              }}
             />
 
             <TuyaSection
@@ -129,6 +139,7 @@ function Home() {
               hideUnboundAutomats={home.hideUnboundAutomats}
               visibleTuyaDevices={home.visibleTuyaDevices}
               deviceToMiner={home.deviceToMiner}
+              deyeStationByDeviceId={home.deyeStationByDeviceId}
               tuyaBindingByMiner={home.tuyaBindingByMiner}
               pendingTuyaByDevice={home.pendingTuyaByDevice}
               orderedMiners={home.orderedMiners}

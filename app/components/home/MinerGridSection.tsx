@@ -41,6 +41,7 @@ type MinerMetric = {
   ip?: string;
   asicType?: string;
   firmware?: string;
+  firmwareFamily?: string;
   authType?: string;
   readStatus?: string;
   error?: string;
@@ -143,6 +144,12 @@ export function MinerGridSection({
   onRequestMinerCommandConfirm,
   onUnlockOverheatControl,
 }: MinerGridSectionProps) {
+  const middleEllipsize = (value: string, maxLength: number) => {
+    const trimmed = value.trim();
+    if (trimmed.length <= maxLength) return trimmed;
+    const keep = Math.max(2, Math.floor((maxLength - 3) / 2));
+    return `${trimmed.slice(0, keep)}...${trimmed.slice(-keep)}`;
+  };
   const theme = useTheme();
   const PLACEHOLDER_ID = "__drag_placeholder__";
   const greenChipText = theme.palette.custom.chipTextOnSuccess;
@@ -221,7 +228,11 @@ export function MinerGridSection({
           return renderCardIds.map((cardId) => {
             if (cardId === PLACEHOLDER_ID) {
               return (
-                <Grid key={PLACEHOLDER_ID} size={{ xs: 12, lg: 4 }} sx={{ display: "flex" }}>
+                <Grid
+                  key={PLACEHOLDER_ID}
+                  size={{ xs: 12, lg: 4 }}
+                  sx={{ display: "flex", minWidth: 0, maxWidth: "100%" }}
+                >
                   <Box
                     onDragOver={(event) => {
                       if (!draggedCardId) return;
@@ -279,21 +290,40 @@ export function MinerGridSection({
             const isActuallyOffline = online === false;
             const isActuallySleeping = online === true && minerMode === 1;
             const isSleepingLike = isActuallySleeping;
-            const statusLabel = isActuallyOffline
-              ? t(uiLang, "offline")
-              : isSleepingLike
-                ? t(uiLang, "sleep")
-                : online === true
-                  ? t(uiLang, "online")
-                  : t(uiLang, "unknown");
-            const statusColor: "success" | "default" =
-              online === true && !isSleepingLike ? "success" : "default";
-            const statusVariant: "filled" | "outlined" =
-              online === true && !isSleepingLike ? "filled" : "outlined";
+            const readStatusUpper = String(metric?.readStatus ?? "").toUpperCase();
+            const shouldHideBoardStates =
+              isSleepingLike ||
+              effectivePhase === "SLEEPING" ||
+              pendingAction === "SLEEP" ||
+              online !== true ||
+              readStatusUpper === "FAILED" ||
+              readStatusUpper === "OFFLINE";
+            const overheatLocked = miner.overheatLocked === true;
+            const overheatTempDisplay =
+              typeof miner.overheatLastTempC === "number" && Number.isFinite(miner.overheatLastTempC)
+                ? Number(miner.overheatLastTempC.toFixed(1)).toString()
+                : null;
+            const statusLabel = overheatLocked
+              ? `${t(uiLang, "locked")}${overheatTempDisplay ? ` (${overheatTempDisplay}°C)` : ""}`
+              : isActuallyOffline
+                ? t(uiLang, "offline")
+                : isSleepingLike
+                  ? t(uiLang, "sleep")
+                  : online === true
+                    ? t(uiLang, "online")
+                    : t(uiLang, "unknown");
+            const statusColor: "success" | "default" | "error" = overheatLocked
+              ? "error"
+              : online === true && !isSleepingLike
+                ? "success"
+                : "default";
+            const statusVariant: "filled" | "outlined" = overheatLocked
+              ? "outlined"
+              : online === true && !isSleepingLike
+                ? "filled"
+                : "outlined";
             const hasOnlineBorder = online === true && !isSleepingLike;
             const hasOfflineBorder = online === false;
-
-            const overheatLocked = miner.overheatLocked === true;
 
             const buttonsLocked =
               online === true &&
@@ -329,11 +359,13 @@ export function MinerGridSection({
 
             const alias = minerAliases[miner.minerId]?.trim();
             const titleText = alias || `${metric?.asicType ?? "Antminer"} ${miner.minerId}`;
-            const firmwareHelpText =
-              uiLang === "uk"
-                ? "Поширені варіанти: Stock/Original (рідна), Vnish, Braiins, Hiveon, ASIC.to, MSKMiner."
-                : "Common variants: Stock/Original (vendor), Vnish, Braiins, Hiveon, ASIC.to, MSKMiner.";
-            const linkedDevice = deviceById.get(tuyaBindingByMiner[miner.minerId] ?? "");
+            const displayTitleText = middleEllipsize(titleText, 26);
+            const firmwareName = String(metric?.firmwareFamily ?? metric?.firmware ?? "");
+            const firmwareRelease = String(metric?.firmware ?? "");
+            const firmwareLabel = uiLang === "uk" ? "Прошивка" : "Firmware";
+            const releaseLabel = uiLang === "uk" ? "Реліз" : "Release";
+            const linkedDeviceId = tuyaBindingByMiner[miner.minerId] ?? "";
+            const linkedDevice = deviceById.get(linkedDeviceId);
             const linkedDeviceVariant: "filled" | "outlined" =
               linkedDevice?.on === true ? "filled" : "outlined";
             const linkedDeviceColor: "success" | "default" =
@@ -431,7 +463,7 @@ export function MinerGridSection({
               <Grid
                 key={miner.minerId}
                 size={{ xs: 12, lg: 4 }}
-                sx={{ display: "flex" }}
+                sx={{ display: "flex", minWidth: 0, maxWidth: "100%" }}
                 data-miner-card="1"
               >
                 <Paper
@@ -468,7 +500,11 @@ export function MinerGridSection({
                     flexDirection: "column",
                     gap: 0.8,
                     flex: 1,
+                    width: "100%",
+                    minWidth: 0,
+                    maxWidth: "100%",
                     height: "100%",
+                    overflow: "hidden",
                     borderStyle: "solid",
                     borderWidth: 1,
                     borderColor: (theme) =>
@@ -488,7 +524,13 @@ export function MinerGridSection({
                         : undefined,
                   }}
                 >
-                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="flex-start"
+                    spacing={1}
+                    sx={{ minWidth: 0 }}
+                  >
                     <Box minWidth={0} flex={1}>
                       {editingAliasFor === miner.minerId ? (
                         <Stack direction="row" spacing={0.6} alignItems="center">
@@ -532,22 +574,41 @@ export function MinerGridSection({
                                   },
                                 }}
                               />
-                            ) : null}
+                            ) : (
+                              <Chip
+                                size="small"
+                                color="error"
+                                variant="outlined"
+                                label={`- ${t(uiLang, "without_automat")}`}
+                                sx={{
+                                  borderWidth: 2,
+                                  fontWeight: 700,
+                                  "& .MuiChip-label": {
+                                    fontWeight: 700,
+                                  },
+                                }}
+                              />
+                            )}
                             <Chip
                               label={statusLabel}
                               size="small"
                               color={statusColor}
                               variant={statusVariant}
                               sx={{
+                                maxWidth: 190,
                                 borderWidth:
-                                  statusLabel === t(uiLang, "offline") ? 2 : undefined,
-                                fontWeight: 700,
+                                  statusLabel === t(uiLang, "offline") || overheatLocked ? 2 : undefined,
+                                fontWeight: overheatLocked ? 800 : 700,
                                 color: statusColor === "success" && statusVariant === "filled" ? greenChipText : undefined,
                                 "& .MuiChip-label": {
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
                                   color:
                                     statusColor === "success" && statusVariant === "filled"
                                       ? greenChipText
                                       : undefined,
+                                  fontWeight: overheatLocked ? 800 : undefined,
                                 },
                               }}
                             />
@@ -559,7 +620,7 @@ export function MinerGridSection({
                                 title={titleText}
                                 sx={{ minWidth: 0 }}
                               >
-                                {titleText}
+                                {displayTitleText}
                               </Typography>
                               <Tooltip title="Rename">
                                 <IconButton
@@ -599,16 +660,6 @@ export function MinerGridSection({
                     </Stack>
                   </Stack>
 
-                  {overheatLocked ? (
-                    <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap">
-                      <Chip
-                        label={`${t(uiLang, "locked")} ${typeof miner.overheatLastTempC === "number" ? `(${miner.overheatLastTempC.toFixed(1)}C)` : ""}`}
-                        size="small"
-                        color="error"
-                      />
-                    </Stack>
-                  ) : null}
-
                   <Box
                     sx={{
                       mt: -0.25,
@@ -647,7 +698,7 @@ export function MinerGridSection({
                         variant="outlined"
                         sx={{
                           p: 1.35,
-                          borderRadius: 2,
+                          borderRadius: 1,
                           height: "100%",
                           width: "100%",
                           borderWidth: hasOnlineBorder ? 1 : hasOfflineBorder ? 1 : 2,
@@ -673,7 +724,7 @@ export function MinerGridSection({
                         variant="outlined"
                         sx={{
                           p: 1.35,
-                          borderRadius: 2,
+                          borderRadius: 1,
                           height: "100%",
                           width: "100%",
                           borderWidth: hasOnlineBorder ? 1 : hasOfflineBorder ? 1 : 2,
@@ -731,47 +782,57 @@ export function MinerGridSection({
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {rows.map((row) => (
-                          <TableRow key={`${miner.minerId}-board-${row.board}`} hover>
-                            <TableCell sx={compactCellSx}>{row.board}</TableCell>
-                            <TableCell align="center" sx={compactCellSx}>{row.chips}</TableCell>
-                            <TableCell align="center" sx={compactCellSx}>{row.hw}</TableCell>
-                            <TableCell align="center" sx={compactCellSx}>{row.freq}</TableCell>
-                            <TableCell
-                              align="center"
-                              sx={{
-                                ...compactCellSx,
-                                color:
-                                  typeof row.real === "number" &&
-                                  typeof row.ideal === "number" &&
-                                  row.ideal > 0 &&
-                                  row.real < row.ideal * 0.9
-                                    ? "warning.main"
-                                    : "success.main",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {typeof row.real === "number" ? `${row.real} GH/s` : row.real}
-                            </TableCell>
-                            <TableCell align="center" sx={compactCellSx}>{typeof row.ideal === "number" ? `${row.ideal} GH/s` : row.ideal}</TableCell>
-                            <TableCell align="center" sx={compactCellSx}>{row.inlet}</TableCell>
-                            <TableCell align="center" sx={compactCellSx}>{row.outlet}</TableCell>
-                            <TableCell
-                              align="center"
-                              sx={{
-                                ...compactCellSx,
-                                color: String(row.state).toLowerCase().includes("stateabnormal")
-                                  ? "warning.main"
-                                  : "inherit",
-                                fontWeight: String(row.state).toLowerCase().includes("stateabnormal")
-                                  ? 700
-                                  : undefined,
-                              }}
-                            >
-                              {String(row.state).toUpperCase() === "OK" ? t(uiLang, "normal") : row.state}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {rows.map((row) => {
+                          const rowStateRaw = String(row.state ?? "").trim();
+                          const rowStateUpper = rowStateRaw.toUpperCase();
+                          const hideBoardState = shouldHideBoardStates;
+                          const isStateAbnormal =
+                            !hideBoardState && rowStateRaw.toLowerCase().includes("stateabnormal");
+                          const boardStateDisplay = hideBoardState
+                            ? "-"
+                            : rowStateUpper === "OK"
+                              ? t(uiLang, "normal")
+                              : rowStateUpper === "FAIL"
+                                ? t(uiLang, "fail")
+                                : row.state;
+                          return (
+                            <TableRow key={`${miner.minerId}-board-${row.board}`} hover>
+                              <TableCell sx={compactCellSx}>{row.board}</TableCell>
+                              <TableCell align="center" sx={compactCellSx}>{row.chips}</TableCell>
+                              <TableCell align="center" sx={compactCellSx}>{row.hw}</TableCell>
+                              <TableCell align="center" sx={compactCellSx}>{row.freq}</TableCell>
+                              <TableCell
+                                align="center"
+                                sx={{
+                                  ...compactCellSx,
+                                  color:
+                                    typeof row.real === "number" &&
+                                    typeof row.ideal === "number" &&
+                                    row.ideal > 0 &&
+                                    row.real < row.ideal * 0.9
+                                      ? "warning.main"
+                                      : "success.main",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {typeof row.real === "number" ? `${row.real} GH/s` : row.real}
+                              </TableCell>
+                              <TableCell align="center" sx={compactCellSx}>{typeof row.ideal === "number" ? `${row.ideal} GH/s` : row.ideal}</TableCell>
+                              <TableCell align="center" sx={compactCellSx}>{row.inlet}</TableCell>
+                              <TableCell align="center" sx={compactCellSx}>{row.outlet}</TableCell>
+                              <TableCell
+                                align="center"
+                                sx={{
+                                  ...compactCellSx,
+                                  color: isStateAbnormal ? "warning.main" : "inherit",
+                                  fontWeight: isStateAbnormal ? 700 : undefined,
+                                }}
+                              >
+                                {boardStateDisplay}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </TableContainer>
@@ -805,63 +866,87 @@ export function MinerGridSection({
                     sx={{ width: "100%" }}
                   >
                     {metric?.firmware ? (
-                      <Tooltip title={`${firmwareHelpText} Current: ${metric.firmware}`}>
+                      <Tooltip
+                        title={
+                          <Box>
+                            <Typography variant="caption" sx={{ display: "block", fontWeight: 700 }}>
+                              {releaseLabel}: {firmwareRelease}
+                            </Typography>
+                            <Typography variant="caption" sx={{ display: "block", mt: 0.5 }}>
+                              {uiLang === "uk" ? "Поширені типи прошивок:" : "Common firmware families:"}
+                            </Typography>
+                            <Typography variant="caption" sx={{ display: "block" }}>
+                              {uiLang === "uk"
+                                ? "Stock/Original (рідна), Vnish, Braiins, Hiveon, ASIC.to, MSKMiner."
+                                : "Stock/Original (vendor), Vnish, Braiins, Hiveon, ASIC.to, MSKMiner."}
+                            </Typography>
+                          </Box>
+                        }
+                      >
                         <Typography
                           variant="caption"
                           color="text.secondary"
-                          noWrap
-                          sx={{ maxWidth: 220, cursor: "help" }}
+                          sx={{
+                            maxWidth: 280,
+                            minWidth: 0,
+                            cursor: "help",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
                         >
-                          Firmware: {metric.firmware}
+                          {`${firmwareLabel}: ${firmwareName}`}
                         </Typography>
                       </Tooltip>
                     ) : null}
                     <Stack direction="row" spacing={0.6} flexWrap="wrap" sx={{ flexShrink: 0, justifyContent: "flex-end" }}>
-                      <Button
-                        size="small"
-                        variant={restartDisabledFinal ? "outlined" : "contained"}
-                        color="primary"
-                        disabled={restartDisabledFinal}
-                        sx={actionButtonSx}
-                        title={overheatLocked ? "Overheat lock is active. Unlock control first." : undefined}
-                        onClick={() => onRequestMinerCommandConfirm(miner.minerId, "RESTART")}
-                        startIcon={restartInProgress ? <ButtonSpinnerIcon color={restartDisabledFinal ? "#94a3b8" : "currentColor"} /> : null}
-                      >
-                        {t(uiLang, "restart")}
-                      </Button>
-                      <Button
-                        size="small"
-                        variant={sleepDisabled ? "outlined" : "contained"}
-                        color="inherit"
-                        disabled={sleepDisabled}
-                        sx={actionButtonSx}
-                        onClick={() => onRequestMinerCommandConfirm(miner.minerId, "SLEEP")}
-                        startIcon={pendingAction === "SLEEP" ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
-                      >
-                        {t(uiLang, "sleep")}
-                      </Button>
-                      <Button
-                        size="small"
-                        variant={wakeDisabled ? "outlined" : "contained"}
-                        color="success"
-                        disabled={wakeDisabled}
-                        sx={actionButtonSx}
-                        title={overheatLocked ? "Overheat lock is active. Unlock control first." : undefined}
-                        onClick={() => onRequestMinerCommandConfirm(miner.minerId, "WAKE")}
-                        startIcon={wakeInProgress ? <ButtonSpinnerIcon color={wakeDisabled ? "#9ca3af" : "currentColor"} /> : null}
-                      >
-                        {t(uiLang, "wake")}
-                      </Button>
                       {overheatLocked ? (
                         <Button
                           size="small"
-                          color="error"
-                          variant="outlined"
+                          variant="contained"
+                          color="success"
+                          sx={actionButtonSx}
                           onClick={() => onUnlockOverheatControl(miner.minerId)}
                         >
-                          Unlock control
+                          {t(uiLang, "unlock_control")}
                         </Button>
-                      ) : null}
+                      ) : (
+                        <>
+                          <Button
+                            size="small"
+                            variant={restartDisabledFinal ? "outlined" : "contained"}
+                            color="primary"
+                            disabled={restartDisabledFinal}
+                            sx={actionButtonSx}
+                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, "RESTART")}
+                            startIcon={restartInProgress ? <ButtonSpinnerIcon color={restartDisabledFinal ? "#94a3b8" : "currentColor"} /> : null}
+                          >
+                            {t(uiLang, "restart")}
+                          </Button>
+                          <Button
+                            size="small"
+                            variant={sleepDisabled ? "outlined" : "contained"}
+                            color="inherit"
+                            disabled={sleepDisabled}
+                            sx={actionButtonSx}
+                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, "SLEEP")}
+                            startIcon={pendingAction === "SLEEP" ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
+                          >
+                            {t(uiLang, "sleep")}
+                          </Button>
+                          <Button
+                            size="small"
+                            variant={wakeDisabled ? "outlined" : "contained"}
+                            color="success"
+                            disabled={wakeDisabled}
+                            sx={actionButtonSx}
+                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, "WAKE")}
+                            startIcon={wakeInProgress ? <ButtonSpinnerIcon color={wakeDisabled ? "#9ca3af" : "currentColor"} /> : null}
+                          >
+                            {t(uiLang, "wake")}
+                          </Button>
+                        </>
+                      )}
                     </Stack>
                   </Stack>
                 </Paper>

@@ -43,6 +43,7 @@ export type MinerState = {
   boundTuyaDeviceId?: string | null;
   autoPowerOffGenerationBelowKw?: number | null;
   autoPowerOnGenerationAboveKw?: number | null;
+  autoPowerOnWhenGenerationCoversConsumption?: boolean;
   autoPowerOffBatteryBelowPercent?: number | null;
   autoPowerOnBatteryAbovePercent?: number | null;
   autoPowerRestoreDelayMinutes?: number;
