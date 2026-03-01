@@ -4,6 +4,8 @@ import {
   DEYE_HISTORY_DAY_TIME_ZONE_DEFAULT,
   DEYE_HISTORY_GENERATION_CACHE_TTL_MS,
   FETCH_TIMEOUT_MS,
+  NIGHT_TARIFF_END_HOUR,
+  NIGHT_TARIFF_START_HOUR,
 } from "@/app/lib/constants";
 import type { DeyeStationSnapshot } from "@/app/lib/deye-types";
 import { useGlobalSlice } from "@/app/lib/global-state";
@@ -208,6 +210,16 @@ function resolveHistoryDayTimeZone(): string {
   } catch {
     return DEYE_HISTORY_DAY_TIME_ZONE_DEFAULT;
   }
+}
+
+function hourInTimeZone(tsSec: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(tsSec * 1000));
+  const h = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  return h === 24 ? 0 : h;
 }
 
 function dateKeyInTimeZone(date: Date, timeZone: string): string {
@@ -488,6 +500,195 @@ async function getAccessToken(baseUrl: string, appId: string, appSecret: string)
     (json as { token?: string; accessToken?: string }).accessToken;
   if (!token) throw new Error("Deye token response does not contain token.");
   return token;
+}
+
+export type DeyeHistoryDaySummary = {
+  generationKwh: number | null;
+  consumptionKwh: number | null;
+  importKwhDay: number | null;
+  importKwhNight: number | null;
+  exportKwh: number | null;
+};
+
+const globalHistoryDayCache = globalThis as unknown as {
+  __deyeHistoryDayCache?: Map<string, { summary: DeyeHistoryDaySummary | null; fetchedAtMs: number }>;
+};
+
+function getHistoryDayCache(): Map<string, { summary: DeyeHistoryDaySummary | null; fetchedAtMs: number }> {
+  if (!globalHistoryDayCache.__deyeHistoryDayCache) {
+    globalHistoryDayCache.__deyeHistoryDayCache = new Map();
+  }
+  return globalHistoryDayCache.__deyeHistoryDayCache;
+}
+
+/** Fetch full-day power summary for a specific YYYY-MM-DD from the Deye history API.
+ *  Integrates generation, consumption, and grid import/export over all returned intervals.
+ *  Returns null when the API is unavailable or returns no data points. */
+export async function fetchDeyeHistoryDaySummary(dayKey: string): Promise<DeyeHistoryDaySummary | null> {
+  const now = Date.now();
+  const cache = getHistoryDayCache();
+  const cached = cache.get(dayKey);
+  const timeZone = resolveHistoryDayTimeZone();
+  const todayKey = dateKeyInTimeZone(new Date(), timeZone);
+  // Past days cache for 1 hour; today caches for 10 min (data is still accumulating)
+  const ttl = dayKey === todayKey ? 10 * 60 * 1_000 : 60 * 60 * 1_000;
+  if (cached && now - cached.fetchedAtMs < ttl) return cached.summary;
+
+  const baseUrl = getEnv("DEYE_BASE_URL") || DEYE_BASE_URL_DEFAULT;
+  const appId = getEnv("DEYE_APP_ID");
+  const appSecret = getEnv("DEYE_APP_SECRET");
+  const stationIdRaw = getEnv("DEYE_STATION_ID");
+  const stationId = Number.parseInt(stationIdRaw, 10);
+  if (!appId || !appSecret || !Number.isFinite(stationId)) return null;
+
+  try {
+    const token = await getAccessToken(baseUrl, appId, appSecret);
+    const resp = await fetch(`${baseUrl}/station/history`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `bearer ${token}` },
+      body: JSON.stringify({ stationId, granularity: 1, startAt: dayKey, endAt: dayKey }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    const json = (await resp.json().catch(() => ({}))) as DeyeApiResponse & { stationDataItems?: unknown };
+    if (!resp.ok || json.success === false) throw new Error("history failed");
+
+    const rawItems: unknown[] = Array.isArray(json.stationDataItems)
+      ? json.stationDataItems
+      : Array.isArray((json.data as { stationDataItems?: unknown[] } | undefined)?.stationDataItems)
+        ? ((json.data as { stationDataItems?: unknown[] }).stationDataItems ?? [])
+        : [];
+
+    console.log(`[deye-history] ${dayKey}: ${rawItems.length} raw items from API`);
+
+    type Pt = { tsSec: number; genKw: number | null; gridKw: number | null; rawWire: number | null };
+    const points: Pt[] = rawItems
+      .map((item): Pt | null => {
+        if (!item || typeof item !== "object") return null;
+        const row = item as Record<string, unknown>;
+        const tsSec = maybeNumber(row.timeStamp);
+        if (tsSec === null || !Number.isFinite(tsSec)) return null;
+        const genKw = toKw(
+          maybeNumber(row.generationPower ?? row.pvPower ?? row.solarPower ?? row.totalPvPower),
+        );
+        const rawWire = maybeNumber(row.wirePower ?? row.gridPower ?? row.gridActivePower ?? row.fromGridPower);
+        // wirePower in history API: sign convention auto-detected below.
+        const gridKw = toKw(rawWire);
+        return { tsSec, genKw, gridKw, rawWire };
+      })
+      .filter((p): p is Pt => p !== null)
+      .sort((a, b) => a.tsSec - b.tsSec);
+
+    if (points.length >= 2) {
+      const first = points[0];
+      const last = points[points.length - 1];
+      const fmt = (tsSec: number) =>
+        new Intl.DateTimeFormat("uk-UA", {
+          timeZone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(new Date(tsSec * 1000));
+      console.log(
+        `[deye-history] ${dayKey}: points span ${fmt(first.tsSec)}–${fmt(last.tsSec)} (${timeZone}), ` +
+        `first genKw=${first.genKw} rawWire=${first.rawWire}, last genKw=${last.genKw} rawWire=${last.rawWire}`,
+      );
+      // Log first 5 and last 5 points for inspection
+      const sample = [...points.slice(0, 5), ...(points.length > 10 ? points.slice(-5) : [])];
+      for (const p of sample) {
+        console.log(
+          `  ts=${fmt(p.tsSec)} genKw=${p.genKw?.toFixed(3) ?? "null"} rawWire=${p.rawWire} gridKw=${p.gridKw?.toFixed(3) ?? "null"}`,
+        );
+      }
+    }
+
+    if (points.length < 2) {
+      cache.set(dayKey, { summary: null, fetchedAtMs: now });
+      return null;
+    }
+
+    let generationKwh = 0;
+    let hasGrid = false;
+    // Accumulate both sign conventions in parallel, then pick the physically plausible one.
+    // Convention A: positive wirePower = export to grid, negative = import from grid.
+    // Convention B: positive wirePower = import from grid, negative = export to grid.
+    const accA = { importDay: 0, importNight: 0, exportDay: 0, exportNight: 0 };
+    const accB = { importDay: 0, importNight: 0, export: 0 };
+
+    for (let i = 1; i < points.length; i++) {
+      const prev = points[i - 1];
+      const curr = points[i];
+      const deltaHours = (curr.tsSec - prev.tsSec) / 3600;
+      if (!Number.isFinite(deltaHours) || deltaHours <= 0 || deltaHours > 1) continue;
+
+      if (prev.genKw !== null && curr.genKw !== null) {
+        generationKwh += ((Math.max(0, prev.genKw) + Math.max(0, curr.genKw)) / 2) * deltaHours;
+      }
+      if (prev.gridKw !== null && curr.gridKw !== null) {
+        hasGrid = true;
+        const avgKw = (prev.gridKw + curr.gridKw) / 2;
+        const midHour = hourInTimeZone((prev.tsSec + curr.tsSec) / 2, timeZone);
+        const isNight = midHour >= NIGHT_TARIFF_START_HOUR || midHour < NIGHT_TARIFF_END_HOUR;
+        const absKwh = Math.abs(avgKw) * deltaHours;
+        if (avgKw > 0) {
+          if (isNight) accA.exportNight += absKwh; else accA.exportDay += absKwh;
+          if (isNight) accB.importNight += absKwh; else accB.importDay += absKwh;
+        } else if (avgKw < 0) {
+          if (isNight) accA.importNight += absKwh; else accA.importDay += absKwh;
+          accB.export += absKwh;
+        }
+      }
+    }
+
+    const totalExportA = accA.exportDay + accA.exportNight;
+    // Convention A is wrong if either:
+    // (a) total export exceeds physically possible amount (> 1.5× generation + 10 kWh), OR
+    // (b) significant night export (> 10 kWh) — no solar at night, miners don't export to grid.
+    const useConvA = totalExportA <= generationKwh * 1.5 + 10 && accA.exportNight <= 10;
+    const chosen = useConvA
+      ? { importDay: accA.importDay, importNight: accA.importNight, export: totalExportA }
+      : { importDay: accB.importDay, importNight: accB.importNight, export: accB.export };
+    const importKwhDay = chosen.importDay;
+    const importKwhNight = chosen.importNight;
+    const exportKwh = chosen.export;
+
+    console.log(
+      `[deye-history] ${dayKey}: generationKwh=${generationKwh.toFixed(3)} hasGrid=${hasGrid}`,
+    );
+    console.log(
+      `[deye-history] ${dayKey}: ConvA  importDay=${accA.importDay.toFixed(3)} importNight=${accA.importNight.toFixed(3)} exportDay=${accA.exportDay.toFixed(3)} exportNight=${accA.exportNight.toFixed(3)}`,
+    );
+    console.log(
+      `[deye-history] ${dayKey}: ConvB  importDay=${accB.importDay.toFixed(3)} importNight=${accB.importNight.toFixed(3)} export=${accB.export.toFixed(3)}`,
+    );
+    console.log(
+      `[deye-history] ${dayKey}: nightExportA=${accA.exportNight.toFixed(3)} totalExportA=${totalExportA.toFixed(3)} threshold=${(generationKwh * 1.5 + 10).toFixed(3)} → using Conv${useConvA ? "A (pos=export)" : "B (pos=import)"}`,
+    );
+    console.log(
+      `[deye-history] ${dayKey}: CHOSEN importDay=${importKwhDay.toFixed(3)} importNight=${importKwhNight.toFixed(3)} export=${exportKwh.toFixed(3)}`,
+    );
+
+    const importKwhTotal = importKwhDay + importKwhNight;
+    // Derive consumption from energy balance (more reliable than consumptionPower field).
+    const consumptionKwh = hasGrid ? Math.max(0, generationKwh + importKwhTotal - exportKwh) : null;
+
+    console.log(
+      `[deye-history] ${dayKey}: consumptionKwh=${consumptionKwh?.toFixed(3) ?? "null"} (gen+imp-exp=${(generationKwh + importKwhTotal - exportKwh).toFixed(3)})`,
+    );
+
+    const summary: DeyeHistoryDaySummary = {
+      generationKwh: generationKwh > 0 ? round2(generationKwh) : null,
+      consumptionKwh: consumptionKwh !== null ? round2(consumptionKwh) : null,
+      importKwhDay: hasGrid ? round2(importKwhDay) : null,
+      importKwhNight: hasGrid ? round2(importKwhNight) : null,
+      exportKwh: hasGrid ? round2(exportKwh) : null,
+    };
+    cache.set(dayKey, { summary, fetchedAtMs: now });
+    return summary;
+  } catch {
+    cache.set(dayKey, { summary: null, fetchedAtMs: now });
+    return null;
+  }
 }
 
 export async function fetchDeyeStationSnapshot(): Promise<DeyeStationSnapshot> {

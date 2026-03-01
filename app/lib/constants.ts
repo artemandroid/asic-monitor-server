@@ -69,3 +69,11 @@ export const LOW_HASHRATE_RESTART_GRACE_MS = 10 * 60 * 1_000;
 
 /** How long a manual control action (restart/sleep/wake) locks the UI control buttons. */
 export const CONTROL_ACTION_LOCK_MS = 10 * 60 * 1_000;
+
+// ── Electricity tariff ──────────────────────────────────────────────────────────
+
+/** Hour (inclusive) at which the night tariff zone begins. */
+export const NIGHT_TARIFF_START_HOUR = 23;
+
+/** Hour (exclusive) at which the night tariff zone ends (day begins). */
+export const NIGHT_TARIFF_END_HOUR = 7;

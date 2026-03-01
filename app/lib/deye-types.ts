@@ -43,7 +43,10 @@ export type DeyeEnergyTodaySummary = {
   importKwhNight: number;
   exportKwh: number;
   solarCoveragePercent: number;
-  estimatedNetCost: number;
+  /** Import cost only (dayRate × importDay + nightRate × importNight). Null when no tariff is configured. */
+  estimatedNetCost: number | null;
+  /** Net cost after subtracting green tariff export earnings. Null when no tariff or greenRate=0. */
+  estimatedNetCostWithGreen: number | null;
 };
 
 export type DeyeStationSnapshot = {

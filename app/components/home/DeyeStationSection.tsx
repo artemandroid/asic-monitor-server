@@ -7,11 +7,13 @@ import {
   Menu,
   MenuItem,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { SectionPaper } from "@/app/components/ui/SectionPaper";
 import { StatPill } from "@/app/components/ui/StatPill";
 import { StatusChip } from "@/app/components/ui/StatusChip";
+import { EnergyHistoryModal } from "@/app/components/home/EnergyHistoryModal";
 import { useTheme } from "@mui/material/styles";
 import type { DeyeStationSnapshot } from "@/app/lib/deye-types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
@@ -103,6 +105,7 @@ export function DeyeStationSection({
 }: DeyeStationSectionProps) {
   const theme = useTheme();
   const [addAutomatAnchorEl, setAddAutomatAnchorEl] = useState<HTMLElement | null>(null);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const neutralGray = theme.palette.custom.deyeNeutralGray;
   const fullBlue = theme.palette.custom.deyeFullBlue;
   const negativeRed = theme.palette.custom.deyeNegativeRed;
@@ -156,6 +159,8 @@ export function DeyeStationSection({
       ? t(uiLang, "grid_import_power")
       : t(uiLang, "grid_export_power");
   const gridLabelColor = isGridImport ? negativeRed : fullBlue;
+
+  const energyToday = deyeStation?.energyToday ?? null;
   const stationAutomatSet = useMemo(() => new Set(stationAutomatIds), [stationAutomatIds]);
   const availableAutomats = tuyaDevices.filter((device) => !stationAutomatSet.has(device.id));
   const tuyaDeviceById = useMemo(
@@ -198,41 +203,49 @@ export function DeyeStationSection({
               isActive={deyeStation?.gridOnline}
               label={gridStatusLabel}
             />
-            <StatPill borderColor={batteryVisualColor} gap={0.75}>
-              <BatteryPill batteryColor={batteryColor} batteryFill={batteryFill} />
-              <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
-                {typeof batterySoc === "number" ? `${batterySoc.toFixed(1)}%` : "-"}
-              </Typography>
-            </StatPill>
-            {batteryModeLabel && showBatteryStatusPill ? (
-              <StatPill borderColor={batteryStatusColor}>
-                <Typography variant="body2" sx={{ color: batteryStatusColor }} noWrap>
-                  {batteryModeLabel}:
-                </Typography>
+            <Tooltip title={t(uiLang, "tooltip_battery_soc")} placement="top" arrow>
+              <StatPill borderColor={batteryVisualColor} gap={0.75}>
+                <BatteryPill batteryColor={batteryColor} batteryFill={batteryFill} />
                 <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
-                  {batteryPowerText}
+                  {typeof batterySoc === "number" ? `${batterySoc.toFixed(1)}%` : "-"}
                 </Typography>
               </StatPill>
+            </Tooltip>
+            {batteryModeLabel && showBatteryStatusPill ? (
+              <Tooltip title={t(uiLang, "tooltip_battery_power")} placement="top" arrow>
+                <StatPill borderColor={batteryStatusColor}>
+                  <Typography variant="body2" sx={{ color: batteryStatusColor }} noWrap>
+                    {batteryModeLabel}:
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
+                    {batteryPowerText}
+                  </Typography>
+                </StatPill>
+              </Tooltip>
             ) : null}
             {hasGeneration ? (
-              <StatPill borderColor={generationLabelColor}>
-                <Typography variant="body2" sx={{ color: generationLabelColor }} noWrap>
-                  {t(uiLang, "generation")}:
-                </Typography>
-                <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
-                  {typeof generationKw === "number" ? `${generationKw.toFixed(2)} ${kwUnit}` : "-"}
-                </Typography>
-              </StatPill>
+              <Tooltip title={t(uiLang, "tooltip_generation")} placement="top" arrow>
+                <StatPill borderColor={generationLabelColor}>
+                  <Typography variant="body2" sx={{ color: generationLabelColor }} noWrap>
+                    {t(uiLang, "generation")}:
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
+                    {typeof generationKw === "number" ? `${generationKw.toFixed(2)} ${kwUnit}` : "-"}
+                  </Typography>
+                </StatPill>
+              </Tooltip>
             ) : null}
             {showGridFlow ? (
-              <StatPill borderColor={gridLabelColor}>
-                <Typography variant="body2" sx={{ color: gridLabelColor }} noWrap>
-                  {gridPowerLabel}:
-                </Typography>
-                <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
-                  {typeof gridPowerKw === "number" ? `${Math.abs(gridPowerKw).toFixed(2)} ${kwUnit}` : "-"}
-                </Typography>
-              </StatPill>
+              <Tooltip title={t(uiLang, "tooltip_grid_flow")} placement="top" arrow>
+                <StatPill borderColor={gridLabelColor}>
+                  <Typography variant="body2" sx={{ color: gridLabelColor }} noWrap>
+                    {gridPowerLabel}:
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: valueTextColor, fontWeight: 500 }} noWrap>
+                    {typeof gridPowerKw === "number" ? `${Math.abs(gridPowerKw).toFixed(2)} ${kwUnit}` : "-"}
+                  </Typography>
+                </StatPill>
+              </Tooltip>
             ) : null}
           </Stack>
         </Stack>
@@ -243,6 +256,17 @@ export function DeyeStationSection({
               ? t(uiLang, "updating")
               : `${t(uiLang, "updated")}: ${formatUpdatedAt(deyeStation?.updatedAt)}`}
           </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            sx={{ minWidth: 0, px: 0.8, py: 0.2, fontSize: 11 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setHistoryModalOpen(true);
+            }}
+          >
+            {t(uiLang, "details")}
+          </Button>
           <Typography variant="subtitle2" color="text.secondary">
             {deyeCollapsed ? "▸" : "▾"}
           </Typography>
@@ -341,6 +365,13 @@ export function DeyeStationSection({
         </Typography>
       ) : null}
 
+      {historyModalOpen ? (
+        <EnergyHistoryModal
+          uiLang={uiLang}
+          todayData={energyToday}
+          onClose={() => setHistoryModalOpen(false)}
+        />
+      ) : null}
     </SectionPaper>
   );
 }

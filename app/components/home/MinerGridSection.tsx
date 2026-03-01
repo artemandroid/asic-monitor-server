@@ -286,6 +286,7 @@ export function MinerGridSection({
               effectivePhase === MinerControlPhase.SLEEPING ||
               pendingAction === CommandType.SLEEP;
             const readStatus = metric?.readStatus;
+            const isNoAccess = online === false || readStatus === ReadStatus.FAILED || readStatus === ReadStatus.OFFLINE;
             const shouldHideBoardStates =
               isSleepingLike ||
               effectivePhase === MinerControlPhase.SLEEPING ||
@@ -300,13 +301,15 @@ export function MinerGridSection({
                 : null;
             const statusLabel = overheatLocked
               ? `${t(uiLang, "locked")}${overheatTempDisplay ? ` (${overheatTempDisplay}°C)` : ""}`
-              : isActuallyOffline
-                ? t(uiLang, "offline")
-                : isSleepingLike
-                  ? t(uiLang, "sleep")
-                  : online === true
-                    ? t(uiLang, "online")
-                    : t(uiLang, "unknown");
+              : isNoAccess
+                ? t(uiLang, "no_access")
+                : isActuallyOffline
+                  ? t(uiLang, "offline")
+                  : isSleepingLike
+                    ? t(uiLang, "sleep")
+                    : online === true
+                      ? t(uiLang, "online")
+                      : t(uiLang, "unknown");
             const statusColor: "success" | "default" | "error" = overheatLocked
               ? "error"
               : online === true && !isSleepingLike
@@ -573,7 +576,7 @@ export function MinerGridSection({
                               sx={{
                                 maxWidth: 190,
                                 borderWidth:
-                                  statusLabel === t(uiLang, "offline") || overheatLocked ? 2 : undefined,
+                                  isActuallyOffline || isNoAccess || overheatLocked ? 2 : undefined,
                                 fontWeight: overheatLocked ? 800 : 700,
                                 color: statusColor === "success" && statusVariant === "filled" ? greenChipText : undefined,
                                 "& .MuiChip-label": {
@@ -811,6 +814,7 @@ export function MinerGridSection({
                     spacing={1}
                     sx={{ width: "100%" }}
                   >
+                    <Stack spacing={0.1} sx={{ minWidth: 0, flex: 1 }}>
                     {metric?.firmware ? (
                       <Tooltip
                         title={
@@ -845,6 +849,10 @@ export function MinerGridSection({
                         </Typography>
                       </Tooltip>
                     ) : null}
+                    <Typography variant="caption" color="text.secondary">
+                      {t(uiLang, "updated")}: {formatLastSeen(miner.lastSeen)}
+                    </Typography>
+                    </Stack>
                     <Stack direction="row" spacing={0.6} flexWrap="wrap" sx={{ flexShrink: 0, justifyContent: "flex-end" }}>
                       {overheatLocked ? (
                         <ActionButton

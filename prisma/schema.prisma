@@ -104,3 +104,12 @@ model Notification {
   action    String?
   createdAt DateTime @default(now())
 }
+
+model ElectricityTariff {
+  id            Int      @id @default(autoincrement())
+  effectiveFrom DateTime
+  dayRateUah    Float
+  nightRateUah  Float
+  greenRateUah  Float    @default(0)
+  createdAt     DateTime @default(now())
+}
