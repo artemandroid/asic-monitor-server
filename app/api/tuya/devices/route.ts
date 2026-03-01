@@ -20,10 +20,17 @@ export async function GET(request: NextRequest) {
       }
       result = await getTuyaSnapshotStored();
     }
-    return NextResponse.json({
-      ...result.snapshot,
-      error: refreshError ?? result.error,
-    });
+    return NextResponse.json(
+      {
+        ...result.snapshot,
+        error: refreshError ?? result.error,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      },
+    );
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unknown Tuya cache error" },

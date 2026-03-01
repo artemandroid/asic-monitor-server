@@ -260,7 +260,31 @@ export function MinerGridSection({
             const minerMode = typeof metric?.minerMode === "number" ? metric.minerMode : null;
             const isActuallyOffline = online === false;
             const isActuallySleeping = online === true && minerMode === 1;
-            const isSleepingLike = isActuallySleeping;
+            const runtimeSeconds =
+              typeof metric?.runtimeSeconds === "number" && Number.isFinite(metric.runtimeSeconds)
+                ? metric.runtimeSeconds
+                : null;
+            const hasZeroBoardHashrates =
+              Array.isArray(metric?.boardHashrates) &&
+              metric.boardHashrates.length > 0 &&
+              metric.boardHashrates.every(
+                (value) => typeof value === "number" && Number.isFinite(value) && value <= 0,
+              );
+            const hasZeroBoardFreqs =
+              Array.isArray(metric?.boardFreqs) &&
+              metric.boardFreqs.length > 0 &&
+              metric.boardFreqs.every(
+                (value) => typeof value === "number" && Number.isFinite(value) && value <= 0,
+              );
+            const looksSleepingByTelemetry =
+              online === true &&
+              ((runtimeSeconds !== null && runtimeSeconds <= 0) ||
+                (hasZeroBoardHashrates && hasZeroBoardFreqs));
+            const isSleepingLike =
+              isActuallySleeping ||
+              looksSleepingByTelemetry ||
+              effectivePhase === MinerControlPhase.SLEEPING ||
+              pendingAction === CommandType.SLEEP;
             const readStatus = metric?.readStatus;
             const shouldHideBoardStates =
               isSleepingLike ||
@@ -313,8 +337,9 @@ export function MinerGridSection({
             const hasPendingAction = Boolean(pendingAction);
             const restartDisabled = hasPendingAction || buttonsLocked || overheatLocked || online !== true || isSleepingLike;
             const sleepDisabled = hasPendingAction || buttonsLocked || online !== true || isSleepingLike;
+            const canAttemptWake = isSleepingLike || online !== true;
             const wakeDisabled =
-              hasPendingAction || buttonsLocked || overheatLocked || !isSleepingLike;
+              hasPendingAction || buttonsLocked || overheatLocked || !canAttemptWake;
             const restartDisabledFinal = restartDisabled || overheatLocked;
             const restartInProgress =
               pendingAction === CommandType.RESTART ||
@@ -856,7 +881,7 @@ export function MinerGridSection({
                             onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.WAKE)}
                             startIcon={wakeInProgress ? <ButtonSpinnerIcon color={wakeDisabled ? "#9ca3af" : "currentColor"} /> : null}
                           >
-                            {t(uiLang, "wake")}
+                            {wakeInProgress ? t(uiLang, "waking") : t(uiLang, "wake")}
                           </ActionButton>
                         </>
                       )}

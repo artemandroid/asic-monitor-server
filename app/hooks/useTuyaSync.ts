@@ -56,7 +56,7 @@ export function useTuyaSync({
     }
     setTuyaLoading(true);
     try {
-      const res = await fetch("/api/tuya/devices");
+      const res = await fetch("/api/tuya/devices", { cache: "no-store" });
       const payload = (await res.json()) as TuyaSnapshot | { error?: string };
       if (!res.ok) {
         throw new Error(

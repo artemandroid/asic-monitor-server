@@ -188,7 +188,7 @@ export const ukMessages: Record<UiTranslationKey, string> = {
   "updating": "Оновлення...",
   "uptime": "Аптайм",
   "wake": "Пробудити",
-  "waking": "Пробудження...",
+  "waking": "Прокидається",
   "warm_up_after_restart_wake": "Розгін після старту",
   "warn": "УВАГА",
   "charging_fallback": "Фолбек по заряджанню",

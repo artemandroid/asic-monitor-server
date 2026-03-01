@@ -126,7 +126,8 @@ export function computeNextControlStates(
       }
     }
 
-    if (now - current.since > CONTROL_ACTION_LOCK_MS * 6) {
+    // SLEEPING is a durable state and may last hours; do not expire it by transient UI lock timeout.
+    if (current.phase !== MinerControlPhase.SLEEPING && now - current.since > CONTROL_ACTION_LOCK_MS * 6) {
       changed = true;
       continue;
     }
@@ -189,6 +190,11 @@ export function computeNextControlStates(
     }
 
     if (current.phase === MinerControlPhase.SLEEPING) {
+      // Keep SLEEPING while miner is offline; many firmwares report sleep as offline.
+      if (online !== true) {
+        next[miner.minerId] = current;
+        continue;
+      }
       if (!sleeping) {
         changed = true;
         continue;

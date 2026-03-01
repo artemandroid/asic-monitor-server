@@ -243,6 +243,7 @@ function Home() {
             bellIcon={<BellIcon />}
             localizeNotificationMessage={home.localizeNotificationMessage}
             restartActionStateForNote={home.restartActionStateForNote}
+            wakeActionStateForNote={home.wakeActionStateForNote}
             onToggleCollapsed={() => home.setNotificationsCollapsed((prev) => !prev)}
             onRequestMinerCommandConfirm={home.requestMinerCommandConfirm}
             containerSx={{ minHeight: "100%" }}

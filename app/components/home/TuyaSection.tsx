@@ -97,7 +97,9 @@ export function TuyaSection({
     0,
   );
   const formatKwh = (value: number | null | undefined) =>
-    typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)} kWh` : "-";
+    typeof value === "number" && Number.isFinite(value)
+      ? `${value.toFixed(Math.abs(value) < 1 ? 3 : 2)} kWh`
+      : "-";
 
   return (
     <SectionPaper sx={{ mb: 1.25 }}>

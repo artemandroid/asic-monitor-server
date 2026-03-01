@@ -29,6 +29,8 @@ export type TuyaDeviceView = {
   switchCode: string | null;
   powerW: number | null;
   energyTodayKwh: number | null;
+  energyTodayRawKwh: number | null;
+  energyTodaySourceCode: string | null;
   energyTotalKwh: number | null;
   category: string | null;
   productName: string | null;
@@ -179,37 +181,45 @@ function withScale(
       return raw / 10 ** scale;
     }
   }
+  // Common Tuya metering breakers expose add_ele with fixed scale=3 in spec.
+  if (key === "add_ele") {
+    return raw / 1_000;
+  }
   return raw;
 }
 
-function normalizeEnergyKwh(value: number, key: string): number {
+function normalizeEnergyKwh(value: number): number {
   const abs = Math.abs(value);
-  // On common DIN rail switches, add_ele is exposed as tenths of kWh.
-  if (key === "add_ele" && Number.isInteger(value) && abs < 100000) {
-    return value / 10;
-  }
   // Heuristic fallback for devices that expose Wh-ish counters without explicit scale.
   if (abs >= 100000) return value / 1000;
   return value;
 }
 
+type EnergyPick = {
+  key: string;
+  value: number;
+};
+
 function pickEnergy(
   status: TuyaStatusItem[],
   keys: string[],
-): number | null {
+): EnergyPick | null {
   const map = new Map(status.map((s) => [s.code, s.value]));
   for (const key of keys) {
     const val = withScale(map, key);
     if (val === null) continue;
-    const normalized = normalizeEnergyKwh(val, key);
+    const normalized = normalizeEnergyKwh(val);
     if (Number.isFinite(normalized)) {
-      return Math.max(0, normalized);
+      return {
+        key,
+        value: Math.max(0, normalized),
+      };
     }
   }
   return null;
 }
 
-function extractEnergyTodayKwh(status: TuyaStatusItem[]): number | null {
+function extractEnergyTodayKwh(status: TuyaStatusItem[]): EnergyPick | null {
   return pickEnergy(status, [
     "add_ele",
     "day_ele",
@@ -221,7 +231,8 @@ function extractEnergyTodayKwh(status: TuyaStatusItem[]): number | null {
 }
 
 function extractEnergyTotalKwh(status: TuyaStatusItem[]): number | null {
-  return pickEnergy(status, [
+  return (
+    pickEnergy(status, [
     "total_forward_energy",
     "forward_energy_total",
     "total_energy",
@@ -229,7 +240,8 @@ function extractEnergyTotalKwh(status: TuyaStatusItem[]): number | null {
     "sum_energy",
     "electricity_total",
     "total_ele",
-  ]);
+    ])?.value ?? null
+  );
 }
 
 function extractSwitchCode(status: TuyaStatusItem[]): string | null {
@@ -297,6 +309,7 @@ export async function fetchTuyaDevices(): Promise<TuyaSnapshot> {
           pathWithQuery: `/v1.0/devices/${encodeURIComponent(device.id)}/status`,
         });
         const status = Array.isArray(statusResp.result) ? statusResp.result : [];
+        const today = extractEnergyTodayKwh(status);
         return {
           id: device.id,
           name: device.name || device.id,
@@ -304,7 +317,9 @@ export async function fetchTuyaDevices(): Promise<TuyaSnapshot> {
           on: extractOn(status),
           switchCode: extractSwitchCode(status),
           powerW: extractPowerW(status),
-          energyTodayKwh: extractEnergyTodayKwh(status),
+          energyTodayKwh: today?.value ?? null,
+          energyTodayRawKwh: today?.value ?? null,
+          energyTodaySourceCode: today?.key ?? null,
           energyTotalKwh: extractEnergyTotalKwh(status),
           category: device.category ?? null,
           productName: device.product_name ?? null,
@@ -318,6 +333,8 @@ export async function fetchTuyaDevices(): Promise<TuyaSnapshot> {
           switchCode: null,
           powerW: null,
           energyTodayKwh: null,
+          energyTodayRawKwh: null,
+          energyTodaySourceCode: null,
           energyTotalKwh: null,
           category: device.category ?? null,
           productName: device.product_name ?? null,

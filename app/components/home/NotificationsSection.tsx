@@ -7,7 +7,7 @@ import { t, type UiLang } from "@/app/lib/ui-lang";
 
 type GroupedNotification = Notification & { count?: number };
 
-type RestartActionState = {
+type CommandActionState = {
   enabled: boolean;
   title?: string;
 };
@@ -19,7 +19,8 @@ type NotificationsSectionProps = {
   visibleGroupedNotifications: GroupedNotification[];
   bellIcon: ReactNode;
   localizeNotificationMessage: (note: Notification) => string;
-  restartActionStateForNote: (note: Notification) => RestartActionState;
+  restartActionStateForNote: (note: Notification) => CommandActionState;
+  wakeActionStateForNote: (note: Notification) => CommandActionState;
   onToggleCollapsed: () => void;
   onRequestMinerCommandConfirm: (minerId: string, command: CommandType) => void;
   containerSx?: SxProps<Theme>;
@@ -34,6 +35,7 @@ export function NotificationsSection({
   bellIcon,
   localizeNotificationMessage,
   restartActionStateForNote,
+  wakeActionStateForNote,
   onToggleCollapsed,
   onRequestMinerCommandConfirm,
   containerSx,
@@ -51,6 +53,8 @@ export function NotificationsSection({
       case "BOARD_HASHRATE_DRIFT":
       case "OVERHEAT_WAKE_DEFERRED":
         return "warning";
+      case "OVERHEAT_UNLOCKED":
+        return "info";
       case "OVERHEAT_WAKE_SENT":
         return "success";
       case "POWER_AUTOMATION":
@@ -135,6 +139,23 @@ export function NotificationsSection({
                       onClick={() => onRequestMinerCommandConfirm(note.minerId!, CommandType.RESTART)}
                     >
                       {t(uiLang, "restart_now")}
+                    </ActionButton>
+                  </Box>
+                );
+              })()}
+
+              {note.action === CommandType.WAKE && note.minerId && (() => {
+                const wakeAction = wakeActionStateForNote(note);
+                return (
+                  <Box sx={{ mt: 0.9 }}>
+                    <ActionButton
+                      variant={wakeAction.enabled ? "contained" : "outlined"}
+                      color={wakeAction.enabled ? "success" : "inherit"}
+                      disabled={!wakeAction.enabled}
+                      title={wakeAction.title}
+                      onClick={() => onRequestMinerCommandConfirm(note.minerId!, CommandType.WAKE)}
+                    >
+                      {t(uiLang, "wake")}
                     </ActionButton>
                   </Box>
                 );

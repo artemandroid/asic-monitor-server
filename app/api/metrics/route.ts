@@ -123,8 +123,28 @@ function computeDecisions(
   const postRestartGraceMs = Math.max(config.postRestartGraceMinutes, 0) * 60 * 1_000;
   const overheatThreshold = config.overheatShutdownTempC;
   const overheatSleepMinutes = Math.max(5, Math.floor(config.overheatSleepMinutes));
+  const runtimeSeconds =
+    typeof body.runtimeSeconds === "number" && Number.isFinite(body.runtimeSeconds)
+      ? body.runtimeSeconds
+      : null;
+  const hasPositiveBoardHashrate = Array.isArray(body.boardHashrates)
+    ? body.boardHashrates.some(
+        (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
+      )
+    : false;
+  const hasPositiveBoardFreq = Array.isArray(body.boardFreqs)
+    ? body.boardFreqs.some(
+        (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
+      )
+    : false;
+  const hasActiveMiningTelemetry =
+    (runtimeSeconds !== null && runtimeSeconds > 0) ||
+    (typeof hashrateGh === "number" && hashrateGh > 0) ||
+    hasPositiveBoardHashrate ||
+    hasPositiveBoardFreq;
   const overheatTriggered =
     config.overheatProtectionEnabled &&
+    hasActiveMiningTelemetry &&
     typeof maxTempC === "number" &&
     maxTempC >= overheatThreshold;
   const wasOverheatLocked = config.overheatLocked;

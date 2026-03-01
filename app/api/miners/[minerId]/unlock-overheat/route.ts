@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { CommandType } from "@/app/lib/types";
 import { prisma } from "@/app/lib/prisma";
-import { minerStates } from "@/app/lib/store";
+import { minerStates, notifications } from "@/app/lib/store";
 import { canAccessMiner } from "@/app/lib/access-config";
 import { requireWebAuth } from "@/app/lib/web-auth";
 
@@ -29,6 +30,14 @@ export async function POST(request: NextRequest, { params }: Params) {
         overheatLockedAt: null,
       },
     });
+    await prisma.notification.create({
+      data: {
+        type: "OVERHEAT_UNLOCKED",
+        minerId: updated.id,
+        action: CommandType.WAKE,
+        message: `Overheat lock was manually unlocked for ${updated.id}. Wake now?`,
+      },
+    });
 
     return NextResponse.json({
       ok: true,
@@ -51,6 +60,15 @@ export async function POST(request: NextRequest, { params }: Params) {
     miner.overheatLocked = false;
     miner.overheatLockedAt = null;
     minerStates.set(id, miner);
+    notifications.unshift({
+      id: crypto.randomUUID(),
+      type: "OVERHEAT_UNLOCKED",
+      minerId: id,
+      action: CommandType.WAKE,
+      message: `Overheat lock was manually unlocked for ${id}. Wake now?`,
+      createdAt: new Date().toISOString(),
+    });
+    if (notifications.length > 100) notifications.length = 100;
 
     return NextResponse.json({
       ok: true,

@@ -20,6 +20,7 @@ import {
   groupKeyFor,
   localizeNotificationMessage,
   restartActionStateForNote,
+  wakeActionStateForNote,
 } from "@/app/lib/notification-utils";
 import { formatLastSeen, formatRuntime, toGh } from "@/app/lib/format-utils";
 
@@ -682,7 +683,12 @@ export function useHomeController() {
       if (!res.ok) {
         throw new Error(payload.error ?? `Failed to unlock control: ${res.status}`);
       }
+      minerSync.setMinerControlStates((prev) => ({
+        ...prev,
+        [minerId]: { phase: MinerControlPhase.SLEEPING, since: Date.now() },
+      }));
       await minerSync.fetchMiners();
+      await minerSync.fetchNotifications();
       if (activeMinerSettingsId === minerId) {
         await openMinerSettings(minerId);
       }
@@ -1160,6 +1166,8 @@ export function useHomeController() {
       localizeNotificationMessage(uiLang, note),
     restartActionStateForNote: (note: Notification) =>
       restartActionStateForNote(note, minerById, minerSync.pendingActionByMiner, uiLang),
+    wakeActionStateForNote: (note: Notification) =>
+      wakeActionStateForNote(note, minerById, minerSync.pendingActionByMiner),
     pendingConfirmAction,
     setPendingConfirmAction,
     runConfirmedAction,

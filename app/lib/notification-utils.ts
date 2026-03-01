@@ -85,6 +85,16 @@ export function localizeNotificationMessage(uiLang: UiLang, note: Notification):
     }
   }
 
+  if (note.type === "OVERHEAT_UNLOCKED") {
+    const unlocked =
+      /^Overheat lock was manually unlocked for (.+)\. Wake now\?$/.exec(message);
+    if (unlocked) {
+      return uiLang === "uk"
+        ? `Перегрів-блок для ${unlocked[1]} розблоковано вручну. Пробудити зараз?`
+        : `Overheat lock for ${unlocked[1]} was manually unlocked. Wake now?`;
+    }
+  }
+
   const boardDrift = /^Board hashrate drift on (.+): (.+)\.$/.exec(message);
   if (boardDrift) {
     return t(uiLang, "board_hashrate_drift_detected", {
@@ -211,5 +221,33 @@ export function restartActionStateForNote(
     }
   }
 
+  return { enabled: true };
+}
+
+export function wakeActionStateForNote(
+  note: Notification,
+  minerById: Map<string, MinerState>,
+  pendingActionByMiner: Record<string, CommandType | undefined>,
+): { enabled: boolean; title?: string } {
+  if (note.action !== "WAKE" || !note.minerId) {
+    return { enabled: false, title: "Action is not available" };
+  }
+  const miner = minerById.get(note.minerId);
+  if (!miner) {
+    return { enabled: false, title: "Miner is not available" };
+  }
+  if (miner.overheatLocked === true) {
+    return { enabled: false, title: "Overheat lock is active" };
+  }
+  if (pendingActionByMiner[miner.minerId]) {
+    return { enabled: false, title: "Command already requested" };
+  }
+  if (
+    miner.pendingCommandType === CommandType.RESTART ||
+    miner.pendingCommandType === CommandType.SLEEP ||
+    miner.pendingCommandType === CommandType.WAKE
+  ) {
+    return { enabled: false, title: "Command already requested" };
+  }
   return { enabled: true };
 }
