@@ -54,8 +54,24 @@ export async function POST(request: NextRequest) {
   try {
     const miner = await prisma.miner.findUnique({
       where: { id: command.minerId },
-      select: { overheatLocked: true },
+      select: { overheatLocked: true, manualPowerHold: true },
     });
+    if (
+      miner?.manualPowerHold &&
+      (command.type === CommandType.RESTART ||
+        command.type === CommandType.SLEEP ||
+        command.type === CommandType.WAKE)
+    ) {
+      console.info("[command-create] blocked_by_manual_power_hold", {
+        minerId: command.minerId,
+        type: command.type,
+        by: auth.email,
+      });
+      return NextResponse.json(
+        { error: "Manual OFF hold is active. Turn ON first." },
+        { status: 409 },
+      );
+    }
     if (miner?.overheatLocked && (command.type === CommandType.RESTART || command.type === CommandType.WAKE)) {
       return NextResponse.json(
         { error: "Overheat lock is active. Unlock control first." },
@@ -81,6 +97,22 @@ export async function POST(request: NextRequest) {
     }
   } catch {
     const miner = minerStates.get(command.minerId);
+    if (
+      miner?.manualPowerHold &&
+      (command.type === CommandType.RESTART ||
+        command.type === CommandType.SLEEP ||
+        command.type === CommandType.WAKE)
+    ) {
+      console.info("[command-create] blocked_by_manual_power_hold_memory", {
+        minerId: command.minerId,
+        type: command.type,
+        by: auth.email,
+      });
+      return NextResponse.json(
+        { error: "Manual OFF hold is active. Turn ON first." },
+        { status: 409 },
+      );
+    }
     if (miner?.overheatLocked && (command.type === CommandType.RESTART || command.type === CommandType.WAKE)) {
       return NextResponse.json(
         { error: "Overheat lock is active. Unlock control first." },

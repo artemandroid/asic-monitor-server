@@ -54,6 +54,7 @@ export type MinerState = {
   overheatLocked?: boolean;
   overheatLockedAt?: string | null;
   overheatLastTempC?: number | null;
+  manualPowerHold?: boolean;
   expectedHashrate?: number | null;
   lastMetric: MinerMetric | null;
 };
@@ -101,6 +102,8 @@ export type Settings = {
   notifyRestartPrompt: boolean;
   notificationVisibleCount: number;
   criticalBatteryOffPercent: number;
+  useNetMeteringForGreenTariff: boolean;
+  miningStartDate: string | null;
 };
 
 export type Notification = {

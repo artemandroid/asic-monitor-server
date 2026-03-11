@@ -23,7 +23,6 @@ type DeyeStationSectionProps = {
   deyeStation: DeyeStationSnapshot | null;
   deyeLoading: boolean;
   deyeCollapsed: boolean;
-  automatsTodayConsumptionKwh: number;
   tuyaDevices: Array<{ id: string; name: string }>;
   stationAutomatIds: string[];
   deyeAutomatsSaving: boolean;
@@ -89,7 +88,6 @@ export function DeyeStationSection({
   deyeStation,
   deyeLoading,
   deyeCollapsed,
-  automatsTodayConsumptionKwh,
   tuyaDevices,
   stationAutomatIds,
   deyeAutomatsSaving,
@@ -138,17 +136,6 @@ export function DeyeStationSection({
   const hasGeneration =
     typeof generationKw === "number" && Number.isFinite(generationKw) && generationKw > 0.01;
   const generationLabelColor = hasGeneration ? fullBlue : neutralGray;
-  const generatedTodayKwh = deyeStation?.energyToday?.generationKwh;
-  const generatedTodayText =
-    typeof generatedTodayKwh === "number" && Number.isFinite(generatedTodayKwh)
-      ? `${generatedTodayKwh.toFixed(2)} kWh`
-      : "-";
-  const economyPercentText =
-    typeof generatedTodayKwh === "number" &&
-    Number.isFinite(generatedTodayKwh) &&
-    automatsTodayConsumptionKwh > 0
-      ? `${Math.round(Math.min(100, (generatedTodayKwh / automatsTodayConsumptionKwh) * 100))}%`
-      : "-";
 
   const gridPowerKw = deyeStation?.gridPowerKw ?? null;
   const showGridFlow = deyeStation?.gridOnline !== false;
@@ -190,7 +177,9 @@ export function DeyeStationSection({
         <Stack direction="row" alignItems="center" spacing={1.2} minWidth={0}>
           <SolarPowerRoundedIcon sx={{ fontSize: 18, color: "warning.light", flexShrink: 0 }} />
           <Typography variant="subtitle2" fontWeight={800}>
-            {t(uiLang, "deye_station")} ({t(uiLang, "today_kwh")}: {generatedTodayText} | {t(uiLang, "economy")}: {economyPercentText})
+            {deyeCollapsed
+              ? t(uiLang, "deye_station")
+              : `${t(uiLang, "deye_station")} (${stationTitle !== "-" ? `#${stationTitle}` : "-"})`}
           </Typography>
           <Stack
             direction="row"

@@ -113,12 +113,25 @@ export function localizeNotificationMessage(uiLang: UiLang, note: Notification):
   }
 
   const commandFailed =
-    /^Command (RESTART|SLEEP|WAKE|RELOAD_CONFIG) failed on (.+?)(?:: (.+))?\.$/.exec(message);
+    /^Command (RESTART|SLEEP|WAKE|RELOAD_CONFIG) failed on (.+?)(?:: (.+))?\.?$/.exec(message);
   if (commandFailed) {
+    const command = commandFailed[1];
+    const minerId = commandFailed[2];
+    const reasonRaw = commandFailed[3] ?? "";
+    const reasonLower = reasonRaw.toLowerCase();
+    const isWakeSetMinerConf500 =
+      command === "WAKE" &&
+      reasonLower.includes("set_miner_conf.cgi") &&
+      reasonLower.includes("500");
+    if (isWakeSetMinerConf500) {
+      return t(uiLang, "wake_failed_maybe_already_awake", {
+        minerId,
+      });
+    }
     return t(uiLang, "command_failed_on_miner", {
-      command: commandFailed[1],
-      minerId: commandFailed[2],
-      reason: commandFailed[3] ? `: ${commandFailed[3]}` : "",
+      command,
+      minerId,
+      reason: reasonRaw ? `: ${reasonRaw}` : "",
     });
   }
 
@@ -164,6 +177,53 @@ export function localizeNotificationMessage(uiLang: UiLang, note: Notification):
     });
   }
 
+  const manualOffWithAutomat =
+    /^Manual OFF on (.+): bound automat switched OFF; automation paused until manual ON\. Pending control commands cancelled: (\d+)\.$/.exec(
+      message,
+    );
+  if (manualOffWithAutomat) {
+    return t(uiLang, "manual_power_hold_enabled_with_automat", {
+      minerId: manualOffWithAutomat[1],
+      count: manualOffWithAutomat[2],
+    });
+  }
+
+  const manualOffWithoutAutomat =
+    /^Manual OFF on (.+): no bound automat; automation paused until manual ON\. Pending control commands cancelled: (\d+)\.$/.exec(
+      message,
+    );
+  if (manualOffWithoutAutomat) {
+    return t(uiLang, "manual_power_hold_enabled_without_automat", {
+      minerId: manualOffWithoutAutomat[1],
+      count: manualOffWithoutAutomat[2],
+    });
+  }
+
+  const manualOnWithAutomat =
+    /^Manual ON on (.+): bound automat switched ON; automation resumed\.$/.exec(message);
+  if (manualOnWithAutomat) {
+    return t(uiLang, "manual_power_hold_disabled_with_automat", {
+      minerId: manualOnWithAutomat[1],
+    });
+  }
+
+  const manualOnWithoutAutomat =
+    /^Manual ON on (.+): no bound automat; automation resumed\.$/.exec(message);
+  if (manualOnWithoutAutomat) {
+    return t(uiLang, "manual_power_hold_disabled_without_automat", {
+      minerId: manualOnWithoutAutomat[1],
+    });
+  }
+
+  const manualPowerFailed =
+    /^Manual power control failed on (.+): (.+)$/.exec(message);
+  if (manualPowerFailed) {
+    return t(uiLang, "manual_power_hold_failed", {
+      minerId: manualPowerFailed[1],
+      reason: manualPowerFailed[2],
+    });
+  }
+
   return message;
 }
 
@@ -182,6 +242,9 @@ export function restartActionStateForNote(
   }
   if (miner.overheatLocked === true) {
     return { enabled: false, title: "Overheat lock is active" };
+  }
+  if (miner.manualPowerHold === true) {
+    return { enabled: false, title: t(uiLang, "manual_power_hold_active_turn_on_first") };
   }
   if (pendingActionByMiner[miner.minerId]) {
     return { enabled: false, title: "Command already requested" };
@@ -228,6 +291,7 @@ export function wakeActionStateForNote(
   note: Notification,
   minerById: Map<string, MinerState>,
   pendingActionByMiner: Record<string, CommandType | undefined>,
+  uiLang: UiLang,
 ): { enabled: boolean; title?: string } {
   if (note.action !== "WAKE" || !note.minerId) {
     return { enabled: false, title: "Action is not available" };
@@ -238,6 +302,9 @@ export function wakeActionStateForNote(
   }
   if (miner.overheatLocked === true) {
     return { enabled: false, title: "Overheat lock is active" };
+  }
+  if (miner.manualPowerHold === true) {
+    return { enabled: false, title: t(uiLang, "manual_power_hold_active_turn_on_first") };
   }
   if (pendingActionByMiner[miner.minerId]) {
     return { enabled: false, title: "Command already requested" };

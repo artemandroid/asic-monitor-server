@@ -505,6 +505,8 @@ async function getAccessToken(baseUrl: string, appId: string, appSecret: string)
 export type DeyeHistoryDaySummary = {
   generationKwh: number | null;
   consumptionKwh: number | null;
+  consumptionKwhDay: number | null;
+  consumptionKwhNight: number | null;
   importKwhDay: number | null;
   importKwhNight: number | null;
   exportKwh: number | null;
@@ -608,34 +610,42 @@ export async function fetchDeyeHistoryDaySummary(dayKey: string): Promise<DeyeHi
     }
 
     let generationKwh = 0;
+    let generationKwhDay = 0;
+    let generationKwhNight = 0;
     let hasGrid = false;
     // Accumulate both sign conventions in parallel, then pick the physically plausible one.
     // Convention A: positive wirePower = export to grid, negative = import from grid.
     // Convention B: positive wirePower = import from grid, negative = export to grid.
     const accA = { importDay: 0, importNight: 0, exportDay: 0, exportNight: 0 };
-    const accB = { importDay: 0, importNight: 0, export: 0 };
+    const accB = { importDay: 0, importNight: 0, exportDay: 0, exportNight: 0 };
 
     for (let i = 1; i < points.length; i++) {
       const prev = points[i - 1];
       const curr = points[i];
       const deltaHours = (curr.tsSec - prev.tsSec) / 3600;
       if (!Number.isFinite(deltaHours) || deltaHours <= 0 || deltaHours > 1) continue;
+      const midHour = hourInTimeZone((prev.tsSec + curr.tsSec) / 2, timeZone);
+      const isNight = midHour >= NIGHT_TARIFF_START_HOUR || midHour < NIGHT_TARIFF_END_HOUR;
 
       if (prev.genKw !== null && curr.genKw !== null) {
-        generationKwh += ((Math.max(0, prev.genKw) + Math.max(0, curr.genKw)) / 2) * deltaHours;
+        const genDelta = ((Math.max(0, prev.genKw) + Math.max(0, curr.genKw)) / 2) * deltaHours;
+        generationKwh += genDelta;
+        if (isNight) {
+          generationKwhNight += genDelta;
+        } else {
+          generationKwhDay += genDelta;
+        }
       }
       if (prev.gridKw !== null && curr.gridKw !== null) {
         hasGrid = true;
         const avgKw = (prev.gridKw + curr.gridKw) / 2;
-        const midHour = hourInTimeZone((prev.tsSec + curr.tsSec) / 2, timeZone);
-        const isNight = midHour >= NIGHT_TARIFF_START_HOUR || midHour < NIGHT_TARIFF_END_HOUR;
         const absKwh = Math.abs(avgKw) * deltaHours;
         if (avgKw > 0) {
           if (isNight) accA.exportNight += absKwh; else accA.exportDay += absKwh;
           if (isNight) accB.importNight += absKwh; else accB.importDay += absKwh;
         } else if (avgKw < 0) {
           if (isNight) accA.importNight += absKwh; else accA.importDay += absKwh;
-          accB.export += absKwh;
+          if (isNight) accB.exportNight += absKwh; else accB.exportDay += absKwh;
         }
       }
     }
@@ -646,8 +656,20 @@ export async function fetchDeyeHistoryDaySummary(dayKey: string): Promise<DeyeHi
     // (b) significant night export (> 10 kWh) — no solar at night, miners don't export to grid.
     const useConvA = totalExportA <= generationKwh * 1.5 + 10 && accA.exportNight <= 10;
     const chosen = useConvA
-      ? { importDay: accA.importDay, importNight: accA.importNight, export: totalExportA }
-      : { importDay: accB.importDay, importNight: accB.importNight, export: accB.export };
+      ? {
+          importDay: accA.importDay,
+          importNight: accA.importNight,
+          exportDay: accA.exportDay,
+          exportNight: accA.exportNight,
+          export: totalExportA,
+        }
+      : {
+          importDay: accB.importDay,
+          importNight: accB.importNight,
+          exportDay: accB.exportDay,
+          exportNight: accB.exportNight,
+          export: accB.exportDay + accB.exportNight,
+        };
     const importKwhDay = chosen.importDay;
     const importKwhNight = chosen.importNight;
     const exportKwh = chosen.export;
@@ -659,7 +681,7 @@ export async function fetchDeyeHistoryDaySummary(dayKey: string): Promise<DeyeHi
       `[deye-history] ${dayKey}: ConvA  importDay=${accA.importDay.toFixed(3)} importNight=${accA.importNight.toFixed(3)} exportDay=${accA.exportDay.toFixed(3)} exportNight=${accA.exportNight.toFixed(3)}`,
     );
     console.log(
-      `[deye-history] ${dayKey}: ConvB  importDay=${accB.importDay.toFixed(3)} importNight=${accB.importNight.toFixed(3)} export=${accB.export.toFixed(3)}`,
+      `[deye-history] ${dayKey}: ConvB  importDay=${accB.importDay.toFixed(3)} importNight=${accB.importNight.toFixed(3)} exportDay=${accB.exportDay.toFixed(3)} exportNight=${accB.exportNight.toFixed(3)}`,
     );
     console.log(
       `[deye-history] ${dayKey}: nightExportA=${accA.exportNight.toFixed(3)} totalExportA=${totalExportA.toFixed(3)} threshold=${(generationKwh * 1.5 + 10).toFixed(3)} → using Conv${useConvA ? "A (pos=export)" : "B (pos=import)"}`,
@@ -668,17 +690,27 @@ export async function fetchDeyeHistoryDaySummary(dayKey: string): Promise<DeyeHi
       `[deye-history] ${dayKey}: CHOSEN importDay=${importKwhDay.toFixed(3)} importNight=${importKwhNight.toFixed(3)} export=${exportKwh.toFixed(3)}`,
     );
 
-    const importKwhTotal = importKwhDay + importKwhNight;
-    // Derive consumption from energy balance (more reliable than consumptionPower field).
-    const consumptionKwh = hasGrid ? Math.max(0, generationKwh + importKwhTotal - exportKwh) : null;
+    // Derive day/night consumption from energy balance (generation + import - export).
+    const consumptionKwhDay = hasGrid
+      ? Math.max(0, generationKwhDay + importKwhDay - chosen.exportDay)
+      : null;
+    const consumptionKwhNight = hasGrid
+      ? Math.max(0, generationKwhNight + importKwhNight - chosen.exportNight)
+      : null;
+    const consumptionKwh =
+      hasGrid && consumptionKwhDay !== null && consumptionKwhNight !== null
+        ? Math.max(0, consumptionKwhDay + consumptionKwhNight)
+        : null;
 
     console.log(
-      `[deye-history] ${dayKey}: consumptionKwh=${consumptionKwh?.toFixed(3) ?? "null"} (gen+imp-exp=${(generationKwh + importKwhTotal - exportKwh).toFixed(3)})`,
+      `[deye-history] ${dayKey}: consumptionDay=${consumptionKwhDay?.toFixed(3) ?? "null"} consumptionNight=${consumptionKwhNight?.toFixed(3) ?? "null"} consumptionTotal=${consumptionKwh?.toFixed(3) ?? "null"}`,
     );
 
     const summary: DeyeHistoryDaySummary = {
       generationKwh: generationKwh > 0 ? round2(generationKwh) : null,
       consumptionKwh: consumptionKwh !== null ? round2(consumptionKwh) : null,
+      consumptionKwhDay: consumptionKwhDay !== null ? round2(consumptionKwhDay) : null,
+      consumptionKwhNight: consumptionKwhNight !== null ? round2(consumptionKwhNight) : null,
       importKwhDay: hasGrid ? round2(importKwhDay) : null,
       importKwhNight: hasGrid ? round2(importKwhNight) : null,
       exportKwh: hasGrid ? round2(exportKwh) : null,

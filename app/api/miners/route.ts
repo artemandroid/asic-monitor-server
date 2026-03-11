@@ -68,6 +68,7 @@ export async function GET(request: NextRequest) {
       overheatLocked: boolean;
       overheatLockedAt: Date | null;
       overheatLastTempC: number | null;
+      manualPowerHold: boolean;
       lastMetric: unknown;
     }) => ({
       minerId: miner.id,
@@ -94,6 +95,7 @@ export async function GET(request: NextRequest) {
       overheatLocked: miner.overheatLocked,
       overheatLockedAt: miner.overheatLockedAt?.toISOString() ?? null,
       overheatLastTempC: miner.overheatLastTempC,
+      manualPowerHold: miner.manualPowerHold === true,
       lastMetric: miner.lastMetric ?? null,
     }));
     return NextResponse.json(list);
@@ -134,6 +136,7 @@ export async function GET(request: NextRequest) {
         overheatLocked: miner.overheatLocked ?? false,
         overheatLockedAt: miner.overheatLockedAt ?? null,
         overheatLastTempC: miner.overheatLastTempC ?? null,
+        manualPowerHold: miner.manualPowerHold ?? false,
         lastMetric: miner.lastMetric ?? null,
       }));
     return NextResponse.json(list);

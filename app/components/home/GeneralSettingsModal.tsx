@@ -31,6 +31,8 @@ type GeneralSettings = {
   notifyRestartPrompt: boolean;
   notificationVisibleCount: number;
   criticalBatteryOffPercent: number;
+  useNetMeteringForGreenTariff: boolean;
+  miningStartDate: string;
 };
 
 type TariffPeriod = {
@@ -291,6 +293,30 @@ export function GeneralSettingsModal({
                   : prev,
               )
             }
+          />
+
+          <FormControlLabel
+            control={
+              <Switch
+                checked={draft.useNetMeteringForGreenTariff}
+                onChange={(e) =>
+                  setDraft((prev) =>
+                    prev ? { ...prev, useNetMeteringForGreenTariff: e.target.checked } : prev,
+                  )
+                }
+              />
+            }
+            label={t(uiLang, "use_net_metering_for_green_tariff")}
+          />
+
+          <TextField
+            type="date"
+            label={t(uiLang, "mining_start_date")}
+            value={draft.miningStartDate}
+            onChange={(e) =>
+              setDraft((prev) => (prev ? { ...prev, miningStartDate: e.target.value } : prev))
+            }
+            InputLabelProps={{ shrink: true }}
           />
 
           <Typography variant="caption" color="text.secondary">

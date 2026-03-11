@@ -31,6 +31,9 @@ export function useMinerSync({ pushNotification, playAlertBeep }: UseMinerSyncOp
   const [pendingActionByMiner, setPendingActionByMiner] = useState<
     Record<string, CommandType | undefined>
   >({});
+  const [pendingPowerHoldByMiner, setPendingPowerHoldByMiner] = useState<
+    Record<string, boolean>
+  >({});
   const [minerControlStates, setMinerControlStates] = useState<Record<string, MinerControlState>>(
     {},
   );
@@ -200,6 +203,36 @@ export function useMinerSync({ pushNotification, playAlertBeep }: UseMinerSyncOp
     }
   };
 
+  const setManualPowerHold = async (minerId: string, on: boolean) => {
+    if (!getAuthState()) {
+      router.replace("/auth");
+      return;
+    }
+    try {
+      setPendingPowerHoldByMiner((prev) => ({ ...prev, [minerId]: true }));
+      const res = await fetch(`/api/miners/${encodeURIComponent(minerId)}/power-control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ on }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(payload.error ?? `Failed to set power control: ${res.status}`);
+      }
+      await fetchMiners();
+      await fetchNotifications();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      pushNotification(message);
+    } finally {
+      setPendingPowerHoldByMiner((prev) => {
+        const next = { ...prev };
+        delete next[minerId];
+        return next;
+      });
+    }
+  };
+
   return {
     miners,
     notifications,
@@ -207,6 +240,7 @@ export function useMinerSync({ pushNotification, playAlertBeep }: UseMinerSyncOp
     reloadPending,
     setReloadPending,
     pendingActionByMiner,
+    pendingPowerHoldByMiner,
     minerControlStates,
     setMinerControlStates,
     boardCountByMiner,
@@ -217,6 +251,7 @@ export function useMinerSync({ pushNotification, playAlertBeep }: UseMinerSyncOp
     fetchNotifications,
     createCommand,
     reloadConfig,
+    setManualPowerHold,
     isHashrateReady,
   };
 }

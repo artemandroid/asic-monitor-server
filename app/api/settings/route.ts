@@ -5,6 +5,16 @@ import { requireWebAuth } from "@/app/lib/web-auth";
 
 const FIXED_TUYA_SYNC_INTERVAL_SEC = 3600;
 
+function toUtcDateInputValue(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 export async function GET(request: NextRequest) {
   const auth = requireWebAuth(request);
   if (auth instanceof NextResponse) return auth;
@@ -22,6 +32,10 @@ export async function GET(request: NextRequest) {
     notifyRestartPrompt: settings.notifyRestartPrompt,
     notificationVisibleCount: settings.notificationVisibleCount,
     criticalBatteryOffPercent: settings.criticalBatteryOffPercent,
+    useNetMeteringForGreenTariff: settings.useNetMeteringForGreenTariff,
+    miningStartDate: toUtcDateInputValue(
+      (settings as { miningStartDate?: Date | string | null }).miningStartDate,
+    ),
   });
 }
 
@@ -48,6 +62,8 @@ export async function PUT(request: NextRequest) {
     notifyRestartPrompt?: boolean;
     notificationVisibleCount?: number;
     criticalBatteryOffPercent?: number;
+    useNetMeteringForGreenTariff?: boolean;
+    miningStartDate?: Date | null;
   } = {};
 
   // Tuya polling is fixed to once per hour.
@@ -121,6 +137,22 @@ export async function PUT(request: NextRequest) {
   ) {
     payload.criticalBatteryOffPercent = body.criticalBatteryOffPercent;
   }
+  if (typeof body.useNetMeteringForGreenTariff === "boolean") {
+    payload.useNetMeteringForGreenTariff = body.useNetMeteringForGreenTariff;
+  }
+  if (body.miningStartDate === null) {
+    payload.miningStartDate = null;
+  } else if (typeof body.miningStartDate === "string") {
+    const trimmed = body.miningStartDate.trim();
+    if (!trimmed) {
+      payload.miningStartDate = null;
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const parsed = new Date(`${trimmed}T00:00:00.000Z`);
+      if (!Number.isNaN(parsed.getTime())) {
+        payload.miningStartDate = parsed;
+      }
+    }
+  }
 
   const updated = await updateSettings(payload);
   return NextResponse.json({
@@ -136,5 +168,9 @@ export async function PUT(request: NextRequest) {
     notifyRestartPrompt: updated.notifyRestartPrompt,
     notificationVisibleCount: updated.notificationVisibleCount,
     criticalBatteryOffPercent: updated.criticalBatteryOffPercent,
+    useNetMeteringForGreenTariff: updated.useNetMeteringForGreenTariff,
+    miningStartDate: toUtcDateInputValue(
+      (updated as { miningStartDate?: Date | string | null }).miningStartDate,
+    ),
   });
 }

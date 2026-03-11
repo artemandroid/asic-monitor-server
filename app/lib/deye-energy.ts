@@ -34,6 +34,152 @@ function round2(value: number): number {
   return Number(value.toFixed(2));
 }
 
+type TariffCosts = {
+  estimatedNetCost: number;
+  estimatedNetCostWithGreen: number | null;
+};
+
+export function calculateConsumptionCost(
+  consumptionKwhDayRaw: number,
+  consumptionKwhNightRaw: number,
+  tariff: TariffLike,
+): number {
+  const consumptionKwhDay =
+    typeof consumptionKwhDayRaw === "number" && Number.isFinite(consumptionKwhDayRaw) && consumptionKwhDayRaw > 0
+      ? consumptionKwhDayRaw
+      : 0;
+  const consumptionKwhNight =
+    typeof consumptionKwhNightRaw === "number" &&
+    Number.isFinite(consumptionKwhNightRaw) &&
+    consumptionKwhNightRaw > 0
+      ? consumptionKwhNightRaw
+      : 0;
+  return round2(consumptionKwhDay * tariff.dayRateUah + consumptionKwhNight * tariff.nightRateUah);
+}
+
+export function calculateSolarCoveragePercent(
+  consumptionKwhRaw: number,
+  generationKwhRaw: number,
+  importKwhDayRaw: number,
+  importKwhNightRaw: number,
+  exportKwhRaw: number,
+  options?: {
+    useNetMetering?: boolean;
+  },
+): number {
+  const useNetMetering = options?.useNetMetering === true;
+  const consumptionKwh =
+    typeof consumptionKwhRaw === "number" && Number.isFinite(consumptionKwhRaw) && consumptionKwhRaw > 0
+      ? consumptionKwhRaw
+      : 0;
+  if (consumptionKwh <= 0) return 0;
+  const generationKwh =
+    typeof generationKwhRaw === "number" && Number.isFinite(generationKwhRaw) && generationKwhRaw > 0
+      ? generationKwhRaw
+      : 0;
+  const importKwhDay =
+    typeof importKwhDayRaw === "number" && Number.isFinite(importKwhDayRaw) && importKwhDayRaw > 0
+      ? importKwhDayRaw
+      : 0;
+  const importKwhNight =
+    typeof importKwhNightRaw === "number" && Number.isFinite(importKwhNightRaw) && importKwhNightRaw > 0
+      ? importKwhNightRaw
+      : 0;
+  const exportKwh =
+    typeof exportKwhRaw === "number" && Number.isFinite(exportKwhRaw) && exportKwhRaw > 0
+      ? exportKwhRaw
+      : 0;
+
+  const coveredKwh = useNetMetering
+    ? Math.max(0, consumptionKwh - Math.max(0, importKwhDay + importKwhNight - exportKwh))
+    : Math.max(0, generationKwh - exportKwh);
+  const value = round2(Math.min(100, (coveredKwh / consumptionKwh) * 100));
+  return Object.is(value, -0) ? 0 : value;
+}
+
+export function calculateTariffCosts(
+  importKwhDayRaw: number,
+  importKwhNightRaw: number,
+  exportKwhRaw: number,
+  tariff: TariffLike,
+  options?: {
+    useNetMetering?: boolean;
+  },
+): TariffCosts {
+  const useNetMetering = options?.useNetMetering === true;
+  const importKwhDay =
+    typeof importKwhDayRaw === "number" && Number.isFinite(importKwhDayRaw) && importKwhDayRaw > 0
+      ? importKwhDayRaw
+      : 0;
+  const importKwhNight =
+    typeof importKwhNightRaw === "number" && Number.isFinite(importKwhNightRaw) && importKwhNightRaw > 0
+      ? importKwhNightRaw
+      : 0;
+  const exportKwh =
+    typeof exportKwhRaw === "number" && Number.isFinite(exportKwhRaw) && exportKwhRaw > 0
+      ? exportKwhRaw
+      : 0;
+
+  const importCost = importKwhDay * tariff.dayRateUah + importKwhNight * tariff.nightRateUah;
+  const estimatedNetCost = round2(importCost);
+  if (tariff.greenRateUah <= 0) {
+    return {
+      estimatedNetCost,
+      estimatedNetCostWithGreen: null,
+    };
+  }
+
+  if (!useNetMetering) {
+    return {
+      estimatedNetCost,
+      estimatedNetCostWithGreen: round2(importCost - exportKwh * tariff.greenRateUah),
+    };
+  }
+
+  const importTotal = importKwhDay + importKwhNight;
+  if (importTotal <= 0) {
+    return {
+      estimatedNetCost,
+      estimatedNetCostWithGreen: round2(-exportKwh * tariff.greenRateUah),
+    };
+  }
+
+  // Net-metering model: exported kWh first offsets imported kWh 1:1 regardless of time zone.
+  // Remaining import keeps the original day/night proportion for billing.
+  const netImportTotal = importTotal - exportKwh;
+  if (netImportTotal >= 0) {
+    const dayShare = importKwhDay / importTotal;
+    const nightShare = importKwhNight / importTotal;
+    const billedImportDay = netImportTotal * dayShare;
+    const billedImportNight = netImportTotal * nightShare;
+    return {
+      estimatedNetCost,
+      estimatedNetCostWithGreen: round2(
+        billedImportDay * tariff.dayRateUah + billedImportNight * tariff.nightRateUah,
+      ),
+    };
+  }
+
+  const excessExportKwh = Math.abs(netImportTotal);
+  return {
+    estimatedNetCost,
+    estimatedNetCostWithGreen: round2(-excessExportKwh * tariff.greenRateUah),
+  };
+}
+
+export function calculateEstimatedCostWithoutAsics(
+  generationKwhRaw: number,
+  tariff: TariffLike,
+): number | null {
+  if (tariff.greenRateUah <= 0) return null;
+  const generationKwh =
+    typeof generationKwhRaw === "number" && Number.isFinite(generationKwhRaw) && generationKwhRaw > 0
+      ? generationKwhRaw
+      : 0;
+  const value = round2(-generationKwh * tariff.greenRateUah);
+  return Object.is(value, -0) ? 0 : value;
+}
+
 function normalizeGenerationDayKwh(value?: number | null): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
   return value;
@@ -89,16 +235,22 @@ function summarizeSamples(
   samples: EnergySampleLike[],
   generationDayKwh: number | null = null,
   tariff?: TariffLike,
+  options?: {
+    useNetMetering?: boolean;
+  },
 ): DeyeEnergyTodaySummary | null {
   if (samples.length === 0 && generationDayKwh === null) return null;
 
   let generationFromSamplesKwh = 0;
   let consumptionKwh = 0;
+  let consumptionKwhDay = 0;
+  let consumptionKwhNight = 0;
   let importKwhDay = 0;
   let importKwhNight = 0;
   let exportKwh = 0;
 
   for (const sample of samples) {
+    const isNight = isNightHour(sample.minuteTs.getHours());
     const generationKw = sample.generationPowerKw;
     if (typeof generationKw === "number" && Number.isFinite(generationKw) && generationKw > 0) {
       generationFromSamplesKwh += generationKw / 60;
@@ -107,12 +259,17 @@ function summarizeSamples(
     const consumptionKw = sample.consumptionPowerKw;
     if (typeof consumptionKw === "number" && Number.isFinite(consumptionKw) && consumptionKw > 0) {
       consumptionKwh += consumptionKw / 60;
+      if (isNight) {
+        consumptionKwhNight += consumptionKw / 60;
+      } else {
+        consumptionKwhDay += consumptionKw / 60;
+      }
     }
 
     const wireKw = sample.wirePowerKw;
     if (typeof wireKw === "number" && Number.isFinite(wireKw)) {
       if (wireKw > 0) {
-        if (isNightHour(sample.minuteTs.getHours())) {
+        if (isNight) {
           importKwhNight += wireKw / 60;
         } else {
           importKwhDay += wireKw / 60;
@@ -125,20 +282,38 @@ function summarizeSamples(
 
   const importKwhTotal = importKwhDay + importKwhNight;
   const effectiveGenerationKwh = generationDayKwh ?? generationFromSamplesKwh;
-  const solarCoveragePercent =
-    consumptionKwh > 0 ? Math.min(100, (effectiveGenerationKwh / consumptionKwh) * 100) : 0;
+  const solarCoveragePercent = calculateSolarCoveragePercent(
+    round2(consumptionKwh),
+    round2(effectiveGenerationKwh),
+    round2(importKwhDay),
+    round2(importKwhNight),
+    round2(exportKwh),
+    options,
+  );
 
   let estimatedNetCost: number | null = null;
   let estimatedNetCostWithGreen: number | null = null;
+  let estimatedCostWithoutAsics: number | null = null;
 
   if (tariff) {
-    const importCost =
-      round2(importKwhDay) * tariff.dayRateUah + round2(importKwhNight) * tariff.nightRateUah;
-    estimatedNetCost = round2(importCost);
+    estimatedNetCost = calculateConsumptionCost(
+      round2(consumptionKwhDay),
+      round2(consumptionKwhNight),
+      tariff,
+    );
+    const costs = calculateTariffCosts(
+      round2(importKwhDay),
+      round2(importKwhNight),
+      round2(exportKwh),
+      tariff,
+      options,
+    );
+    estimatedNetCostWithGreen = costs.estimatedNetCostWithGreen;
 
-    const exportEarnings = round2(exportKwh) * tariff.greenRateUah;
-    estimatedNetCostWithGreen =
-      tariff.greenRateUah > 0 ? round2(importCost - exportEarnings) : null;
+    estimatedCostWithoutAsics = calculateEstimatedCostWithoutAsics(
+      round2(effectiveGenerationKwh),
+      tariff,
+    );
   }
 
   return {
@@ -151,6 +326,7 @@ function summarizeSamples(
     solarCoveragePercent: round2(solarCoveragePercent),
     estimatedNetCost,
     estimatedNetCostWithGreen,
+    estimatedCostWithoutAsics,
   };
 }
 
@@ -188,6 +364,9 @@ export async function getDeyeEnergySummaryForRange(
   from: Date,
   to: Date,
   tariff?: TariffLike,
+  options?: {
+    useNetMetering?: boolean;
+  },
 ): Promise<DeyeEnergyTodaySummary | null> {
   const isToday =
     getDayKey(from) === getDayKey(new Date()) &&
@@ -204,22 +383,24 @@ export async function getDeyeEnergySummaryForRange(
         wirePowerKw: true,
       },
     });
-    return summarizeSamples(rows, null, tariff);
+    return summarizeSamples(rows, null, tariff, options);
   } catch (err) {
     console.error("[deye-energy] DB unavailable for range summary:", err);
     if (!isToday) return null;
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
-    return summarizeSamples(getMemorySamplesFrom(startOfDay), null, tariff);
+    return summarizeSamples(getMemorySamplesFrom(startOfDay), null, tariff, options);
   }
 }
 
 export async function getDeyeEnergyTodaySummary(options?: {
   generationDayKwh?: number | null;
   tariff?: TariffLike;
+  useNetMetering?: boolean;
 }): Promise<DeyeEnergyTodaySummary | null> {
   const generationDayKwh = normalizeGenerationDayKwh(options?.generationDayKwh);
   const tariff = options?.tariff;
+  const useNetMetering = options?.useNetMetering === true;
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
@@ -235,11 +416,13 @@ export async function getDeyeEnergyTodaySummary(options?: {
       },
     });
 
-    const fromDb = summarizeSamples(rows, generationDayKwh, tariff);
+    const fromDb = summarizeSamples(rows, generationDayKwh, tariff, { useNetMetering });
     if (fromDb) return fromDb;
   } catch (err) {
     console.error("[deye-energy] DB unavailable for energy summary, using in-memory samples:", err);
   }
 
-  return summarizeSamples(getMemorySamplesFrom(startOfDay), generationDayKwh, tariff);
+  return summarizeSamples(getMemorySamplesFrom(startOfDay), generationDayKwh, tariff, {
+    useNetMetering,
+  });
 }

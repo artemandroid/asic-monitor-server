@@ -131,7 +131,9 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
   const [period, setPeriod] = useState<Period>("today");
   const [customFrom, setCustomFrom] = useState(todayStr);
   const [customTo, setCustomTo] = useState(todayStr);
-  const [data, setData] = useState<DeyeEnergyTodaySummary | null>(null);
+  const [data, setData] = useState<DeyeEnergyTodaySummary | null>(todayData);
+  const [useNetMeteringForGreenTariff, setUseNetMeteringForGreenTariff] = useState(false);
+  const [miningStartDate, setMiningStartDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,16 +151,32 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
     const dates = getPeriodDates(period, customFrom, customTo);
     if (!dates) return;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     fetch(`/api/deye/energy?from=${dates.from}&to=${dates.to}`)
       .then((r) => r.json())
-      .then((res: { summary?: DeyeEnergyTodaySummary | null; error?: string }) => {
+      .then((res: {
+        summary?: DeyeEnergyTodaySummary | null;
+        error?: string;
+        useNetMeteringForGreenTariff?: boolean;
+        miningStartDate?: string | null;
+      }) => {
         if (res.error) {
           setError(res.error);
           setData(null);
         } else {
           setData(res.summary ?? null);
+          setUseNetMeteringForGreenTariff(res.useNetMeteringForGreenTariff === true);
+          const nextMiningStartDate =
+            typeof res.miningStartDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(res.miningStartDate)
+              ? res.miningStartDate
+              : null;
+          setMiningStartDate(nextMiningStartDate);
+          if (period === "custom" && nextMiningStartDate && customFrom !== nextMiningStartDate) {
+            setCustomFrom(nextMiningStartDate);
+            setCustomTo(todayStr);
+          }
         }
       })
       .catch(() => {
@@ -166,8 +184,15 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
         setData(null);
       })
       .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, customFrom, customTo]);
+  }, [period, customFrom, customTo, todayStr]);
+
+  const handlePeriodChange = (next: Period) => {
+    if (next === "custom") {
+      setCustomFrom(miningStartDate ?? todayStr);
+      setCustomTo(todayStr);
+    }
+    setPeriod(next);
+  };
 
   const displayDates = getPeriodDates(period, customFrom, customTo);
   const dateRangeLabel = displayDates ? formatDateRange(displayDates.from, displayDates.to) : null;
@@ -178,12 +203,23 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
     typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(2)} ₴` : null;
   const formatPct = (v: number | null | undefined) =>
     typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)}%` : "-";
+  const formatSignedKwh = (v: number | null | undefined) =>
+    typeof v === "number" && Number.isFinite(v)
+      ? `${v > 0 ? "+" : ""}${v.toFixed(2)} kWh`
+      : "-";
 
   const genCoveragePercent =
     typeof data?.generationKwh === "number" &&
     typeof data?.consumptionKwh === "number" &&
     data.consumptionKwh > 0
       ? Math.min(100, (data.generationKwh / data.consumptionKwh) * 100)
+      : null;
+  const generationMinusConsumptionKwh =
+    typeof data?.generationKwh === "number" &&
+    typeof data?.consumptionKwh === "number" &&
+    Number.isFinite(data.generationKwh) &&
+    Number.isFinite(data.consumptionKwh)
+      ? data.generationKwh - data.consumptionKwh
       : null;
   const genCovered = typeof genCoveragePercent === "number" && genCoveragePercent >= 100;
 
@@ -205,14 +241,14 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
               <Button
                 key={p}
                 variant={period === p ? "contained" : "outlined"}
-                onClick={() => setPeriod(p)}
+                onClick={() => handlePeriodChange(p)}
               >
                 {periodLabels[p]}
               </Button>
             ))}
           </ButtonGroup>
 
-          {/* Custom date pickers */}
+          {/* Custom range from settings: mining start date → today */}
           {period === "custom" ? (
             <Stack direction="row" spacing={1}>
               <TextField
@@ -220,9 +256,9 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
                 size="small"
                 label={t(uiLang, "date_from")}
                 value={customFrom}
-                onChange={(e) => setCustomFrom(e.target.value)}
                 InputLabelProps={{ shrink: true }}
                 inputProps={{ style: { colorScheme: theme.palette.mode } }}
+                disabled
                 fullWidth
               />
               <TextField
@@ -230,9 +266,9 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
                 size="small"
                 label={t(uiLang, "date_to")}
                 value={customTo}
-                onChange={(e) => setCustomTo(e.target.value)}
                 InputLabelProps={{ shrink: true }}
                 inputProps={{ style: { colorScheme: theme.palette.mode } }}
+                disabled
                 fullWidth
               />
             </Stack>
@@ -269,7 +305,7 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
                 />
               </Box>
 
-              {/* Row 2: Solar coverage + Generation coverage */}
+              {/* Row 2: Solar coverage + Generation surplus/coverage */}
               <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1.5 }}>
                 <EnergyCard
                   label={t(uiLang, "solar_coverage_label")}
@@ -278,12 +314,41 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
                   valueColor={valueTextColor}
                   tooltip={t(uiLang, "tooltip_solar_coverage")}
                 />
-                {genCoveragePercent !== null ? (
+                {genCoveragePercent !== null || generationMinusConsumptionKwh !== null ? (
                   <EnergyCard
-                    label={t(uiLang, "gen_coverage_label")}
-                    value={genCovered ? "100% ✓" : formatPct(genCoveragePercent)}
-                    accentColor={genCovered ? fullBlue : neutralGray}
-                    valueColor={genCovered ? fullBlue : valueTextColor}
+                    label={
+                      t(
+                        uiLang,
+                        useNetMeteringForGreenTariff ? "gen_surplus_label" : "gen_coverage_label",
+                      )
+                    }
+                    value={
+                      useNetMeteringForGreenTariff
+                        ? formatSignedKwh(generationMinusConsumptionKwh)
+                        : genCovered
+                          ? "100% ✓"
+                          : formatPct(genCoveragePercent)
+                    }
+                    accentColor={
+                      useNetMeteringForGreenTariff
+                        ? typeof generationMinusConsumptionKwh === "number" &&
+                          generationMinusConsumptionKwh >= 0
+                          ? fullBlue
+                          : negativeRed
+                        : genCovered
+                          ? fullBlue
+                          : neutralGray
+                    }
+                    valueColor={
+                      useNetMeteringForGreenTariff
+                        ? typeof generationMinusConsumptionKwh === "number" &&
+                          generationMinusConsumptionKwh >= 0
+                          ? fullBlue
+                          : negativeRed
+                        : genCovered
+                          ? fullBlue
+                          : valueTextColor
+                    }
                     tooltip={t(uiLang, "tooltip_gen_coverage")}
                   />
                 ) : null}
@@ -326,6 +391,15 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
                     valueColor={valueTextColor}
                     tooltip={t(uiLang, "tooltip_estimated_cost")}
                   />
+                  {data.estimatedCostWithoutAsics !== null ? (
+                    <EnergyCard
+                      label={t(uiLang, "estimated_without_asics")}
+                      value={formatUah(data.estimatedCostWithoutAsics) ?? "-"}
+                      accentColor={data.estimatedCostWithoutAsics < 0 ? successGreen : fullBlue}
+                      valueColor={data.estimatedCostWithoutAsics < 0 ? successGreen : valueTextColor}
+                      tooltip={t(uiLang, "tooltip_estimated_without_asics")}
+                    />
+                  ) : null}
                   {data.estimatedNetCostWithGreen !== null ? (
                     <EnergyCard
                       label={t(uiLang, "estimated_cost_today_with_green")}

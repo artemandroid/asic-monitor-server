@@ -36,6 +36,10 @@ type UseTuyaSyncOptions = {
   ) => void;
 };
 
+type FetchTuyaDevicesOptions = {
+  force?: boolean;
+};
+
 export function useTuyaSync({
   pushNotification,
   tuyaBindingRef,
@@ -49,14 +53,17 @@ export function useTuyaSync({
     Record<string, "ON" | "OFF" | undefined>
   >({});
 
-  const fetchTuyaDevices = async () => {
+  const fetchTuyaDevices = async (options?: FetchTuyaDevicesOptions) => {
     if (!getAuthState()) {
       router.replace("/auth");
       return;
     }
+    const force = options?.force === true;
     setTuyaLoading(true);
     try {
-      const res = await fetch("/api/tuya/devices", { cache: "no-store" });
+      const res = await fetch(force ? "/api/tuya/devices?force=1" : "/api/tuya/devices", {
+        cache: "no-store",
+      });
       const payload = (await res.json()) as TuyaSnapshot | { error?: string };
       if (!res.ok) {
         throw new Error(

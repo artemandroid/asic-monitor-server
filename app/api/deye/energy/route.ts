@@ -2,12 +2,53 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { requireWebAuth } from "@/app/lib/web-auth";
 import { prisma } from "@/app/lib/prisma";
-import { getDeyeEnergySummaryForRange } from "@/app/lib/deye-energy";
+import {
+  calculateConsumptionCost,
+  calculateEstimatedCostWithoutAsics,
+  calculateSolarCoveragePercent,
+  calculateTariffCosts,
+  getDeyeEnergySummaryForRange,
+} from "@/app/lib/deye-energy";
 import { fetchDeyeHistoryDaySummary } from "@/app/lib/deye-client";
+import { getSettings } from "@/app/lib/settings";
 import type { DeyeEnergyTodaySummary } from "@/app/lib/deye-types";
 
 function round2(v: number): number {
   return Number(v.toFixed(2));
+}
+
+function toUtcDateInputValue(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function splitConsumptionByImportShare(
+  consumptionKwhRaw: number,
+  importKwhDayRaw: number,
+  importKwhNightRaw: number,
+): { day: number; night: number } {
+  const consumptionKwh =
+    typeof consumptionKwhRaw === "number" && Number.isFinite(consumptionKwhRaw) && consumptionKwhRaw > 0
+      ? consumptionKwhRaw
+      : 0;
+  const importKwhDay =
+    typeof importKwhDayRaw === "number" && Number.isFinite(importKwhDayRaw) && importKwhDayRaw > 0
+      ? importKwhDayRaw
+      : 0;
+  const importKwhNight =
+    typeof importKwhNightRaw === "number" && Number.isFinite(importKwhNightRaw) && importKwhNightRaw > 0
+      ? importKwhNightRaw
+      : 0;
+  const importTotal = importKwhDay + importKwhNight;
+  if (consumptionKwh <= 0) return { day: 0, night: 0 };
+  if (importTotal <= 0) return { day: consumptionKwh / 2, night: consumptionKwh / 2 };
+  const day = consumptionKwh * (importKwhDay / importTotal);
+  return { day, night: Math.max(0, consumptionKwh - day) };
 }
 
 /** Returns YYYY-MM-DD keys for every calendar day from fromStr to toStr (inclusive). */
@@ -54,6 +95,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid from/to date params" }, { status: 400 });
   }
 
+  const settings = await getSettings();
+  const useNetMeteringForGreenTariff = settings.useNetMeteringForGreenTariff === true;
+  const miningStartDate = toUtcDateInputValue(
+    (settings as { miningStartDate?: Date | string | null }).miningStartDate,
+  );
+
   let activeTariff = null;
   try {
     const tariffDate = new Date(to);
@@ -88,6 +135,8 @@ export async function GET(request: NextRequest) {
 
     let totalGen = 0;
     let totalConsumption = 0;
+    let totalConsumptionDay = 0;
+    let totalConsumptionNight = 0;
     let totalImportDay = 0;
     let totalImportNight = 0;
     let totalExport = 0;
@@ -101,25 +150,56 @@ export async function GET(request: NextRequest) {
         totalImportDay += day.importKwhDay ?? 0;
         totalImportNight += day.importKwhNight ?? 0;
         totalExport += day.exportKwh ?? 0;
+        const fallbackSplit = splitConsumptionByImportShare(
+          day.consumptionKwh ?? 0,
+          day.importKwhDay ?? 0,
+          day.importKwhNight ?? 0,
+        );
+        if (typeof day.consumptionKwhDay === "number" && Number.isFinite(day.consumptionKwhDay)) {
+          totalConsumptionDay += day.consumptionKwhDay;
+        } else {
+          totalConsumptionDay += fallbackSplit.day;
+        }
+        if (typeof day.consumptionKwhNight === "number" && Number.isFinite(day.consumptionKwhNight)) {
+          totalConsumptionNight += day.consumptionKwhNight;
+        } else {
+          totalConsumptionNight += fallbackSplit.night;
+        }
       }
     }
 
     if (anyData) {
       const importKwhTotal = totalImportDay + totalImportNight;
-      const solarToHouseKwh = Math.max(0, totalGen - totalExport);
-      const solarCoveragePercent =
-        totalConsumption > 0 ? Math.min(100, (solarToHouseKwh / totalConsumption) * 100) : 0;
+      const solarCoveragePercent = calculateSolarCoveragePercent(
+        round2(totalConsumption),
+        round2(totalGen),
+        round2(totalImportDay),
+        round2(totalImportNight),
+        round2(totalExport),
+        { useNetMetering: useNetMeteringForGreenTariff },
+      );
 
       let estimatedNetCost: number | null = null;
       let estimatedNetCostWithGreen: number | null = null;
+      let estimatedCostWithoutAsics: number | null = null;
       if (activeTariff) {
-        const importCost = round2(
-          totalImportDay * activeTariff.dayRateUah + totalImportNight * activeTariff.nightRateUah,
+        estimatedNetCost = calculateConsumptionCost(
+          round2(totalConsumptionDay),
+          round2(totalConsumptionNight),
+          activeTariff,
         );
-        estimatedNetCost = importCost;
-        if (activeTariff.greenRateUah > 0) {
-          estimatedNetCostWithGreen = round2(importCost - totalExport * activeTariff.greenRateUah);
-        }
+        const costs = calculateTariffCosts(
+          round2(totalImportDay),
+          round2(totalImportNight),
+          round2(totalExport),
+          activeTariff,
+          { useNetMetering: useNetMeteringForGreenTariff },
+        );
+        estimatedNetCostWithGreen = costs.estimatedNetCostWithGreen;
+        estimatedCostWithoutAsics = calculateEstimatedCostWithoutAsics(
+          round2(totalGen),
+          activeTariff,
+        );
       }
 
       summary = {
@@ -132,6 +212,7 @@ export async function GET(request: NextRequest) {
         solarCoveragePercent: round2(solarCoveragePercent),
         estimatedNetCost,
         estimatedNetCostWithGreen,
+        estimatedCostWithoutAsics,
       };
     }
   } catch {
@@ -141,7 +222,9 @@ export async function GET(request: NextRequest) {
   // Fall back to DB samples if Deye history was unavailable
   if (!summary) {
     try {
-      summary = await getDeyeEnergySummaryForRange(from, to, activeTariff ?? undefined);
+      summary = await getDeyeEnergySummaryForRange(from, to, activeTariff ?? undefined, {
+        useNetMetering: useNetMeteringForGreenTariff,
+      });
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Unknown error" },
@@ -150,5 +233,11 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ summary, from: from.toISOString(), to: to.toISOString() });
+  return NextResponse.json({
+    summary,
+    from: from.toISOString(),
+    to: to.toISOString(),
+    useNetMeteringForGreenTariff,
+    miningStartDate,
+  });
 }

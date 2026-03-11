@@ -14,7 +14,17 @@ export type SettingsPayload = {
   notifyRestartPrompt?: boolean;
   notificationVisibleCount?: number;
   criticalBatteryOffPercent?: number;
+  useNetMeteringForGreenTariff?: boolean;
+  miningStartDate?: Date | null;
 };
+
+function toUtcDateInputValue(value: Date | null | undefined): string | null {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return null;
+  const y = value.getUTCFullYear();
+  const m = String(value.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(value.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 export async function getSettings() {
   try {
@@ -44,6 +54,8 @@ export async function updateSettings(payload: SettingsPayload) {
         notifyRestartPrompt: payload.notifyRestartPrompt,
         notificationVisibleCount: payload.notificationVisibleCount,
         criticalBatteryOffPercent: payload.criticalBatteryOffPercent,
+        useNetMeteringForGreenTariff: payload.useNetMeteringForGreenTariff,
+        miningStartDate: payload.miningStartDate,
       },
     });
   } catch {
@@ -82,6 +94,12 @@ export async function updateSettings(payload: SettingsPayload) {
     }
     if (typeof payload.criticalBatteryOffPercent === "number") {
       memorySettings.criticalBatteryOffPercent = payload.criticalBatteryOffPercent;
+    }
+    if (typeof payload.useNetMeteringForGreenTariff === "boolean") {
+      memorySettings.useNetMeteringForGreenTariff = payload.useNetMeteringForGreenTariff;
+    }
+    if (payload.miningStartDate !== undefined) {
+      memorySettings.miningStartDate = toUtcDateInputValue(payload.miningStartDate ?? null);
     }
     return memorySettings;
   }

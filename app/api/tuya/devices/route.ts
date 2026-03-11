@@ -8,10 +8,13 @@ export async function GET(request: NextRequest) {
   const auth = requireWebAuth(request);
   if (auth instanceof NextResponse) return auth;
   ensureTuyaBackgroundRefresh();
+  const forceRefreshRaw = request.nextUrl.searchParams.get("force");
+  const forceRefresh =
+    forceRefreshRaw === "1" || forceRefreshRaw === "true" || forceRefreshRaw === "yes";
   try {
     let result = await getTuyaSnapshotStored();
     let refreshError: string | undefined;
-    if (result.stale) {
+    if (result.stale || forceRefresh) {
       try {
         const refreshed = await getTuyaSnapshotCached({ force: true, maxAgeMs: 0 });
         refreshError = refreshed.error;

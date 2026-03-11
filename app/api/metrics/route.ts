@@ -85,6 +85,7 @@ function formatBoardDriftMessage(minerId: string, drifts: BoardDrift[]): string 
 type NormalizedMinerConfig = {
   lowHashrateThresholdGh: number;
   postRestartGraceMinutes: number;
+  manualPowerHold: boolean;
   overheatProtectionEnabled: boolean;
   overheatShutdownTempC: number;
   overheatSleepMinutes: number;
@@ -143,6 +144,7 @@ function computeDecisions(
     hasPositiveBoardHashrate ||
     hasPositiveBoardFreq;
   const overheatTriggered =
+    !config.manualPowerHold &&
     config.overheatProtectionEnabled &&
     hasActiveMiningTelemetry &&
     typeof maxTempC === "number" &&
@@ -150,7 +152,10 @@ function computeDecisions(
   const wasOverheatLocked = config.overheatLocked;
   const isOverheatLocked = wasOverheatLocked || overheatTriggered;
   const isLowHashrate =
-    isOnline === true && typeof hashrateGh === "number" && hashrateGh < thresholdGh;
+    !config.manualPowerHold &&
+    isOnline === true &&
+    typeof hashrateGh === "number" &&
+    hashrateGh < thresholdGh;
   const nowMs = now.getTime();
   const restartReady =
     !config.lastRestartAt || nowMs - config.lastRestartAt.getTime() >= postRestartGraceMs;
@@ -445,6 +450,7 @@ export async function POST(request: NextRequest) {
         error: body.error ?? null,
         lastMetric: body,
         lastOnlineAt,
+        manualPowerHold: false,
       },
       update: {
         ip: body.ip ?? existing?.ip ?? minerId,
@@ -467,6 +473,7 @@ export async function POST(request: NextRequest) {
       {
         lowHashrateThresholdGh: upserted.lowHashrateThresholdGh ?? 10,
         postRestartGraceMinutes: upserted.postRestartGraceMinutes ?? 10,
+        manualPowerHold: upserted.manualPowerHold === true,
         overheatProtectionEnabled: upserted.overheatProtectionEnabled === true,
         overheatShutdownTempC: upserted.overheatShutdownTempC ?? 83,
         overheatSleepMinutes: upserted.overheatSleepMinutes ?? 30,
@@ -511,9 +518,9 @@ export async function POST(request: NextRequest) {
       firmware: body.firmware ?? existing?.firmware ?? null,
       authType: body.authType ?? existing?.authType ?? null,
       expectedHashrate: body.expectedHashrate ?? existing?.expectedHashrate ?? undefined,
-      autoRestartEnabled: existing?.autoRestartEnabled ?? false,
-      postRestartGraceMinutes: existing?.postRestartGraceMinutes ?? 10,
-      lowHashrateThresholdGh: existing?.lowHashrateThresholdGh ?? 10,
+      autoRestartEnabled: existing?.autoRestartEnabled ?? settings.autoRestartEnabled,
+      postRestartGraceMinutes: existing?.postRestartGraceMinutes ?? settings.postRestartGraceMinutes,
+      lowHashrateThresholdGh: existing?.lowHashrateThresholdGh ?? settings.lowHashrateThresholdGh,
       autoPowerOnGridRestore: existing?.autoPowerOnGridRestore ?? false,
       autoPowerOffGridLoss: existing?.autoPowerOffGridLoss ?? false,
       boundTuyaDeviceId: existing?.boundTuyaDeviceId ?? null,
@@ -523,6 +530,7 @@ export async function POST(request: NextRequest) {
       autoPowerOnBatteryAbovePercent:
         existing?.autoPowerOnBatteryAbovePercent ?? existing?.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: existing?.autoPowerRestoreDelayMinutes ?? 10,
+      manualPowerHold: existing?.manualPowerHold ?? false,
       overheatProtectionEnabled: existing?.overheatProtectionEnabled ?? true,
       overheatShutdownTempC: existing?.overheatShutdownTempC ?? 83,
       overheatSleepMinutes: existing?.overheatSleepMinutes ?? 30,
@@ -541,8 +549,9 @@ export async function POST(request: NextRequest) {
       body,
       isOnline,
       {
-        lowHashrateThresholdGh: existing?.lowHashrateThresholdGh ?? 10,
-        postRestartGraceMinutes: existing?.postRestartGraceMinutes ?? 10,
+        lowHashrateThresholdGh: existing?.lowHashrateThresholdGh ?? settings.lowHashrateThresholdGh,
+        postRestartGraceMinutes: existing?.postRestartGraceMinutes ?? settings.postRestartGraceMinutes,
+        manualPowerHold: existing?.manualPowerHold ?? false,
         overheatProtectionEnabled: existing?.overheatProtectionEnabled ?? true,
         overheatShutdownTempC: existing?.overheatShutdownTempC ?? 83,
         overheatSleepMinutes: existing?.overheatSleepMinutes ?? 30,
@@ -560,7 +569,7 @@ export async function POST(request: NextRequest) {
       {
         notifyAutoRestart: settings.notifyAutoRestart,
         notifyRestartPrompt: settings.notifyRestartPrompt,
-        autoRestartEnabled: existing?.autoRestartEnabled ?? false,
+        autoRestartEnabled: existing?.autoRestartEnabled ?? settings.autoRestartEnabled,
       },
       nowIso,
       now,

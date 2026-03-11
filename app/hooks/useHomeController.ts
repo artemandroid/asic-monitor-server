@@ -28,6 +28,13 @@ const NOTIFICATION_VISIBLE_COUNT_KEY = "mc_notification_visible_count";
 const BOARD_COUNT_BY_MINER_KEY = "mc_board_count_by_miner";
 const EMPTY_DEVICE_IDS: string[] = [];
 
+function toLocalDateInputValue(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 type GeneralSettings = {
   minerSyncIntervalSec: number;
   deyeSyncIntervalSec: number;
@@ -38,6 +45,8 @@ type GeneralSettings = {
   notifyRestartPrompt: boolean;
   notificationVisibleCount: number;
   criticalBatteryOffPercent: number;
+  useNetMeteringForGreenTariff: boolean;
+  miningStartDate: string;
 };
 
 type MinerSettingsPanel = {
@@ -202,7 +211,7 @@ export function useHomeController() {
 
   const refreshMainRef = useRef<() => Promise<void>>(async () => {});
   const fetchDeyeStationRef = useRef<() => Promise<void>>(async () => {});
-  const fetchTuyaDevicesRef = useRef<() => Promise<void>>(async () => {});
+  const fetchTuyaDevicesRef = useRef<(options?: { force?: boolean }) => Promise<void>>(async () => {});
 
   const refreshMain = async () => {
     await Promise.all([minerSync.fetchMiners(), minerSync.fetchNotifications()]);
@@ -212,7 +221,7 @@ export function useHomeController() {
     await Promise.all([
       refreshMain(),
       deyeSync.fetchDeyeStation(),
-      tuyaSync.fetchTuyaDevices(),
+      tuyaSync.fetchTuyaDevices({ force: true }),
       deyeSync.fetchDeyeStationAutomats(),
     ]);
   };
@@ -505,7 +514,10 @@ export function useHomeController() {
         notifyRestartPrompt: boolean;
         notificationVisibleCount?: number;
         criticalBatteryOffPercent?: number;
+        useNetMeteringForGreenTariff?: boolean;
+        miningStartDate?: string | null;
       };
+      const todayDate = toLocalDateInputValue(new Date());
       setGeneralSettingsDraft({
         minerSyncIntervalSec:
           typeof data.minerSyncIntervalSec === "number" ? data.minerSyncIntervalSec : 60,
@@ -522,6 +534,11 @@ export function useHomeController() {
             : notificationVisibleCount,
         criticalBatteryOffPercent:
           typeof data.criticalBatteryOffPercent === "number" ? data.criticalBatteryOffPercent : 30,
+        useNetMeteringForGreenTariff: data.useNetMeteringForGreenTariff === true,
+        miningStartDate:
+          typeof data.miningStartDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.miningStartDate)
+            ? data.miningStartDate
+            : todayDate,
       });
       setShowGeneralSettings(true);
     } catch (err) {
@@ -715,14 +732,16 @@ export function useHomeController() {
     const stationAutomatSet = stationKey
       ? new Set(deyeSync.deyeAutomatsByStation[stationKey] ?? [])
       : new Set<string>();
+    const enforceStationRestriction =
+      Boolean(stationKey) && deyeSync.deyeAutomatsLoaded && stationAutomatSet.size > 0;
     const safeDeviceId = !normalizedDeviceId
       ? null
-      : stationKey && deyeSync.deyeAutomatsLoaded
+      : enforceStationRestriction
         ? stationAutomatSet.has(normalizedDeviceId)
           ? normalizedDeviceId
           : null
         : normalizedDeviceId;
-    if (normalizedDeviceId && stationKey && deyeSync.deyeAutomatsLoaded && !safeDeviceId) {
+    if (normalizedDeviceId && enforceStationRestriction && !safeDeviceId) {
       pushClientNotification("Automat is not bound to current Deye station.");
     }
     try {
@@ -851,13 +870,16 @@ export function useHomeController() {
     ? (deyeAutomatsByStation[String(Math.trunc(deyeStation.stationId))] ?? EMPTY_DEVICE_IDS)
     : EMPTY_DEVICE_IDS;
   const currentDeyeStationAutomatSet = new Set(currentDeyeStationAutomatIds);
-  const shouldRestrictAutomatsByStation = deyeAutomatsLoaded && hasCurrentDeyeStation;
+  const hasCurrentDeyeStationAutomatBindings = currentDeyeStationAutomatIds.length > 0;
+  const shouldRestrictAutomatsByStation =
+    deyeAutomatsLoaded && hasCurrentDeyeStation && hasCurrentDeyeStationAutomatBindings;
 
   useEffect(() => {
     if (!deyeAutomatsLoaded) return;
     if (typeof deyeStation?.stationId !== "number" || !Number.isFinite(deyeStation.stationId))
       return;
     const stationAutomatSet = new Set(currentDeyeStationAutomatIds);
+    if (stationAutomatSet.size === 0) return;
     const invalidMinerIds = Object.entries(minerSync.tuyaBindingByMiner)
       .filter(([, deviceId]) => {
         const normalized = typeof deviceId === "string" ? deviceId.trim() : "";
@@ -1139,6 +1161,7 @@ export function useHomeController() {
     minerGridRef,
     minerControlStates: minerSync.minerControlStates,
     pendingActionByMiner: minerSync.pendingActionByMiner,
+    pendingPowerHoldByMiner: minerSync.pendingPowerHoldByMiner,
     deviceById,
     statusBadgesVertical,
     boardCountByMiner: minerSync.boardCountByMiner,
@@ -1157,6 +1180,7 @@ export function useHomeController() {
     saveAlias,
     cancelAliasEdit,
     requestMinerCommandConfirm,
+    setManualPowerHold: minerSync.setManualPowerHold,
     unlockOverheatControl,
     notificationsCollapsed,
     setNotificationsCollapsed,
@@ -1167,7 +1191,7 @@ export function useHomeController() {
     restartActionStateForNote: (note: Notification) =>
       restartActionStateForNote(note, minerById, minerSync.pendingActionByMiner, uiLang),
     wakeActionStateForNote: (note: Notification) =>
-      wakeActionStateForNote(note, minerById, minerSync.pendingActionByMiner),
+      wakeActionStateForNote(note, minerById, minerSync.pendingActionByMiner, uiLang),
     pendingConfirmAction,
     setPendingConfirmAction,
     runConfirmedAction,

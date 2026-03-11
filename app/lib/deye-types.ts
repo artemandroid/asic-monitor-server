@@ -43,10 +43,20 @@ export type DeyeEnergyTodaySummary = {
   importKwhNight: number;
   exportKwh: number;
   solarCoveragePercent: number;
-  /** Import cost only (dayRate × importDay + nightRate × importNight). Null when no tariff is configured. */
+  /** Hypothetical cost of total consumption without green tariff (dayRate × consumptionDay + nightRate × consumptionNight). Null when no tariff is configured. */
   estimatedNetCost: number | null;
-  /** Net cost after subtracting green tariff export earnings. Null when no tariff or greenRate=0. */
+  /**
+   * Cost with green tariff according to current settings:
+   * - net-metering ON: exported kWh first offsets imported kWh 1:1;
+   * - net-metering OFF: import cost − exported kWh × greenRate.
+   * Null when no tariff or greenRate=0.
+   */
   estimatedNetCostWithGreen: number | null;
+  /**
+   * Hypothetical cost/profit "without ASICs": all generated kWh are treated as sold by green tariff.
+   * Computed as -generationKwh * greenRate.
+   */
+  estimatedCostWithoutAsics: number | null;
 };
 
 export type DeyeStationSnapshot = {

@@ -135,6 +135,7 @@ export async function runPowerAutomation(): Promise<void> {
           overheatLocked: true,
           overheatLockedAt: true,
           overheatSleepMinutes: true,
+          manualPowerHold: true,
           lastMetric: true,
         },
       }),
@@ -177,11 +178,19 @@ export async function runPowerAutomation(): Promise<void> {
       const isSleepingLike = minerMode === 1;
 
       const overheatLocked = miner.overheatLocked === true;
+      const manualPowerHold = miner.manualPowerHold === true;
       const overheatSleepMinutes = Math.max(
         5,
         Math.floor(miner.overheatSleepMinutes ?? DEFAULT_OVERHEAT_SLEEP_MINUTES),
       );
       const overheatSleepDurationMs = overheatSleepMinutes * 60 * 1000;
+
+      if (manualPowerHold) {
+        delete state.overheatWakePendingByMiner[miner.id];
+        delete state.autoOffRequestedByMiner[miner.id];
+        delete state.thresholdAutoOffAtByMiner[miner.id];
+        continue;
+      }
       const generationAutoOnConfigured = typeof miner.autoPowerOnGenerationAboveKw === "number";
       const generationCoversConsumption =
         typeof station.generationPowerKw === "number" &&

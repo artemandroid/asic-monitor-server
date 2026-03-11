@@ -28,6 +28,7 @@ type Store = {
       overheatLocked?: boolean;
       overheatLockedAt?: string | null;
       overheatLastTempC?: number | null;
+      manualPowerHold?: boolean;
       online?: boolean | null;
       readStatus?: ReadStatus | null;
       error?: string | null;
@@ -58,6 +59,8 @@ const store = useGlobalSlice<Store>("minerStore", () => ({
     notifyRestartPrompt: true,
     notificationVisibleCount: 2,
     criticalBatteryOffPercent: 30,
+    useNetMeteringForGreenTariff: false,
+    miningStartDate: null,
   },
 }));
 

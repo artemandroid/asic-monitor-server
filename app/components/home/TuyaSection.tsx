@@ -114,7 +114,9 @@ export function TuyaSection({
         <Stack direction="row" spacing={1} alignItems="center" minWidth={0}>
           <AppsRoundedIcon sx={{ fontSize: 18, color: "info.light", flexShrink: 0 }} />
           <Typography variant="subtitle2" fontWeight={800}>
-            {t(uiLang, "smartlife_automats")} ({t(uiLang, "today_kwh")}: {totalTodayKwh.toFixed(2)} kWh)
+            {tuyaCollapsed
+              ? t(uiLang, "smartlife_automats")
+              : `${t(uiLang, "smartlife_automats")} (${t(uiLang, "today_kwh")}: ${totalTodayKwh.toFixed(2)} kWh)`}
           </Typography>
 
           {tuyaCollapsed && (

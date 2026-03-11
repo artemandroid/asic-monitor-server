@@ -110,7 +110,6 @@ function Home() {
               deyeStation={home.deyeStation}
               deyeLoading={home.deyeLoading}
               deyeCollapsed={home.deyeCollapsed}
-              automatsTodayConsumptionKwh={home.automatsTodayConsumptionKwh}
               tuyaDevices={home.tuyaData?.devices ?? []}
               stationAutomatIds={home.currentDeyeStationAutomatIds}
               deyeAutomatsSaving={home.deyeAutomatsSaving}
@@ -162,11 +161,10 @@ function Home() {
               settingsIcon={<SettingsIcon />}
               minerControlStates={home.minerControlStates}
               pendingActionByMiner={home.pendingActionByMiner}
+              pendingPowerHoldByMiner={home.pendingPowerHoldByMiner}
               minerAliases={home.minerAliases}
               tuyaBindingByMiner={home.tuyaBindingByMiner}
               deviceById={home.deviceById}
-              onText={home.onText}
-              offText={home.offText}
               statusBadgesVertical={home.statusBadgesVertical}
               boardCountByMiner={home.boardCountByMiner}
               editingAliasFor={home.editingAliasFor}
@@ -183,6 +181,9 @@ function Home() {
               onSaveAlias={home.saveAlias}
               onCancelAliasEdit={home.cancelAliasEdit}
               onRequestMinerCommandConfirm={home.requestMinerCommandConfirm}
+              onSetManualPowerHold={(minerId, on) => {
+                void home.setManualPowerHold(minerId, on);
+              }}
               onUnlockOverheatControl={(minerId) => {
                 void home.unlockOverheatControl(minerId);
               }}

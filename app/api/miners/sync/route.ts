@@ -76,6 +76,7 @@ export async function POST(request: NextRequest) {
           overheatLocked: false,
           overheatLockedAt: null,
           overheatLastTempC: null,
+          manualPowerHold: false,
         },
         update: {
           ip: entry.id,
@@ -126,6 +127,7 @@ export async function POST(request: NextRequest) {
         overheatLocked: existing?.overheatLocked ?? false,
         overheatLockedAt: existing?.overheatLockedAt ?? null,
         overheatLastTempC: existing?.overheatLastTempC ?? null,
+        manualPowerHold: existing?.manualPowerHold ?? false,
       });
     }
 

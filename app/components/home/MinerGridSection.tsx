@@ -3,10 +3,12 @@
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import DragIndicatorRoundedIcon from "@mui/icons-material/DragIndicatorRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
+import PowerSettingsNewRoundedIcon from "@mui/icons-material/PowerSettingsNewRounded";
 import {
   Alert,
   Box,
   Button,
+  CircularProgress,
   Chip,
   Grid,
   IconButton,
@@ -59,11 +61,10 @@ type MinerGridSectionProps = {
   settingsIcon: ReactNode;
   minerControlStates: Record<string, MinerControlState>;
   pendingActionByMiner: Record<string, CommandType | undefined>;
+  pendingPowerHoldByMiner: Record<string, boolean | undefined>;
   minerAliases: Record<string, string>;
   tuyaBindingByMiner: Record<string, string>;
   deviceById: ReadonlyMap<string, TuyaLinkedDevice>;
-  onText: string;
-  offText: string;
   statusBadgesVertical: boolean;
   boardCountByMiner: Record<string, number>;
   editingAliasFor: string | null;
@@ -80,6 +81,7 @@ type MinerGridSectionProps = {
   onSaveAlias: (minerId: string) => void;
   onCancelAliasEdit: () => void;
   onRequestMinerCommandConfirm: (minerId: string, command: CommandType) => void;
+  onSetManualPowerHold: (minerId: string, on: boolean) => void;
   onUnlockOverheatControl: (minerId: string) => void;
 };
 
@@ -92,11 +94,10 @@ export function MinerGridSection({
   settingsIcon,
   minerControlStates,
   pendingActionByMiner,
+  pendingPowerHoldByMiner,
   minerAliases,
   tuyaBindingByMiner,
   deviceById,
-  onText,
-  offText,
   statusBadgesVertical,
   boardCountByMiner,
   editingAliasFor,
@@ -113,6 +114,7 @@ export function MinerGridSection({
   onSaveAlias,
   onCancelAliasEdit,
   onRequestMinerCommandConfirm,
+  onSetManualPowerHold,
   onUnlockOverheatControl,
 }: MinerGridSectionProps) {
   const middleEllipsize = (value: string, maxLength: number) => {
@@ -257,6 +259,7 @@ export function MinerGridSection({
             const effectivePhase: MinerControlPhase | null =
               control?.phase ?? serverPendingPhase ?? (hasServerWarmup ? MinerControlPhase.WARMING_UP : null);
             const pendingAction = pendingActionByMiner[miner.minerId];
+            const powerHoldPending = pendingPowerHoldByMiner[miner.minerId] === true;
             const minerMode = typeof metric?.minerMode === "number" ? metric.minerMode : null;
             const isActuallyOffline = online === false;
             const isActuallySleeping = online === true && minerMode === 1;
@@ -289,17 +292,18 @@ export function MinerGridSection({
             const isNoAccess = online === false || readStatus === ReadStatus.FAILED || readStatus === ReadStatus.OFFLINE;
             const shouldHideBoardStates =
               isSleepingLike ||
-              effectivePhase === MinerControlPhase.SLEEPING ||
-              pendingAction === CommandType.SLEEP ||
               online !== true ||
               readStatus === ReadStatus.FAILED ||
               readStatus === ReadStatus.OFFLINE;
             const overheatLocked = miner.overheatLocked === true;
+            const manualPowerHold = miner.manualPowerHold === true;
             const overheatTempDisplay =
               typeof miner.overheatLastTempC === "number" && Number.isFinite(miner.overheatLastTempC)
                 ? Number(miner.overheatLastTempC.toFixed(1)).toString()
                 : null;
-            const statusLabel = overheatLocked
+            const statusLabel = manualPowerHold
+              ? t(uiLang, "manual_power_hold")
+              : overheatLocked
               ? `${t(uiLang, "locked")}${overheatTempDisplay ? ` (${overheatTempDisplay}°C)` : ""}`
               : isNoAccess
                 ? t(uiLang, "no_access")
@@ -312,15 +316,19 @@ export function MinerGridSection({
                       : t(uiLang, "unknown");
             const statusColor: "success" | "default" | "error" = overheatLocked
               ? "error"
+              : manualPowerHold
+                ? "default"
               : online === true && !isSleepingLike
                 ? "success"
                 : "default";
             const statusVariant: "filled" | "outlined" = overheatLocked
               ? "outlined"
+              : manualPowerHold
+                ? "outlined"
               : online === true && !isSleepingLike
                 ? "filled"
                 : "outlined";
-            const hasOnlineBorder = online === true && !isSleepingLike;
+            const hasOnlineBorder = online === true && !isSleepingLike && !manualPowerHold;
             const hasOfflineBorder = online === false;
             const metricCardSx = {
               p: 1.35,
@@ -337,12 +345,19 @@ export function MinerGridSection({
               effectivePhase === MinerControlPhase.RESTARTING ||
               (online === true && effectivePhase === MinerControlPhase.WAKING) ||
               (online === true && effectivePhase === MinerControlPhase.WARMING_UP);
-            const hasPendingAction = Boolean(pendingAction);
-            const restartDisabled = hasPendingAction || buttonsLocked || overheatLocked || online !== true || isSleepingLike;
-            const sleepDisabled = hasPendingAction || buttonsLocked || online !== true || isSleepingLike;
+            const hasPendingAction = Boolean(pendingAction) || powerHoldPending;
+            const restartDisabled =
+              hasPendingAction ||
+              buttonsLocked ||
+              overheatLocked ||
+              manualPowerHold ||
+              online !== true ||
+              isSleepingLike;
+            const sleepDisabled =
+              hasPendingAction || buttonsLocked || manualPowerHold || online !== true || isSleepingLike;
             const canAttemptWake = isSleepingLike || online !== true;
             const wakeDisabled =
-              hasPendingAction || buttonsLocked || overheatLocked || !canAttemptWake;
+              hasPendingAction || buttonsLocked || overheatLocked || manualPowerHold || !canAttemptWake;
             const restartDisabledFinal = restartDisabled || overheatLocked;
             const restartInProgress =
               pendingAction === CommandType.RESTART ||
@@ -353,6 +368,11 @@ export function MinerGridSection({
               (online === true && effectivePhase === MinerControlPhase.WAKING) ||
               (online === true && effectivePhase === MinerControlPhase.WARMING_UP &&
                 (control?.source === "WAKE" || control?.source === "POWER_ON"));
+            const powerButtonTitle = powerHoldPending
+              ? t(uiLang, "updating")
+              : manualPowerHold
+                ? t(uiLang, "power_button_turn_on_resume_automation")
+                : t(uiLang, "power_button_turn_off_pause_automation");
             const alias = minerAliases[miner.minerId]?.trim();
             const titleText = alias || `${metric?.asicType ?? "Antminer"} ${miner.minerId}`;
             const displayTitleText = middleEllipsize(titleText, 26);
@@ -403,7 +423,6 @@ export function MinerGridSection({
               state: stateMap.get(i) ?? "-",
             }));
 
-            const totalHashrateGh = typeof metric?.hashrate === "number" ? (metric.hashrate / 1000).toFixed(2) : "-";
             const realtimeGh =
               metric?.hashrateRealtime ?? metric?.hashrate
                 ? (metric?.hashrateRealtime ?? (metric?.hashrate ?? 0) / 1000).toFixed(2)
@@ -545,29 +564,76 @@ export function MinerGridSection({
                             flexWrap="nowrap"
                             sx={{ overflow: "hidden" }}
                           >
-                            {linkedDevice ? (
-                              <StatusChip
-                                isActive={linkedDevice.on}
-                                label={linkedDevice.name}
-                                title={linkedDevice.name}
-                                truncate
-                                sx={{ maxWidth: 220 }}
-                              />
-                            ) : (
-                              <Chip
-                                size="small"
-                                color="error"
-                                variant="outlined"
-                                label={`- ${t(uiLang, "without_automat")}`}
-                                sx={{
-                                  borderWidth: 2,
-                                  fontWeight: 700,
-                                  "& .MuiChip-label": {
-                                    fontWeight: 700,
-                                  },
-                                }}
-                              />
-                            )}
+                            <Stack direction="row" spacing={0.7} alignItems="center" sx={{ minWidth: 0, flexShrink: 1, maxWidth: "100%" }}>
+                              <Tooltip title={powerButtonTitle}>
+                                <Box component="span" sx={{ display: "inline-flex", flexShrink: 0, mr: 0.7 }}>
+                                  <IconButton
+                                    size="small"
+                                    aria-label={powerButtonTitle}
+                                    disabled={powerHoldPending}
+                                    onClick={() => onSetManualPowerHold(miner.minerId, manualPowerHold)}
+                                    sx={
+                                      powerHoldPending
+                                        ? {
+                                            width: 22,
+                                            height: 22,
+                                            p: 0.15,
+                                            border: "1px solid",
+                                            borderColor: "warning.main",
+                                            color: "warning.main",
+                                            bgcolor: "rgba(245, 158, 11, 0.12)",
+                                          }
+                                        : manualPowerHold
+                                          ? {
+                                              width: 22,
+                                              height: 22,
+                                              p: 0.15,
+                                              border: "1px solid",
+                                              borderColor: "error.main",
+                                              color: "error.main",
+                                              bgcolor: "rgba(239, 68, 68, 0.12)",
+                                              "&:hover": { bgcolor: "rgba(239, 68, 68, 0.18)" },
+                                            }
+                                          : {
+                                              width: 22,
+                                              height: 22,
+                                              p: 0.15,
+                                              border: "1px solid",
+                                              borderColor: "success.main",
+                                              color: "success.main",
+                                              bgcolor: "rgba(34, 197, 94, 0.15)",
+                                              "&:hover": { bgcolor: "rgba(34, 197, 94, 0.22)" },
+                                            }
+                                    }
+                                  >
+                                    {powerHoldPending ? (
+                                      <CircularProgress size={12} thickness={5} color="inherit" />
+                                    ) : (
+                                      <PowerSettingsNewRoundedIcon sx={{ fontSize: 13 }} />
+                                    )}
+                                  </IconButton>
+                                </Box>
+                              </Tooltip>
+                              <Typography
+                                variant="subtitle1"
+                                fontWeight={800}
+                                noWrap
+                                title={titleText}
+                                sx={{ minWidth: 0, ml: 0.35 }}
+                              >
+                                {displayTitleText}
+                              </Typography>
+                              <Tooltip title="Rename">
+                                <IconButton
+                                  size="small"
+                                  color="primary"
+                                  sx={{ p: 0.35 }}
+                                  onClick={() => onStartAliasEdit(miner.minerId, alias || "")}
+                                >
+                                  <EditRoundedIcon fontSize="small" sx={{ fontSize: 16 }} />
+                                </IconButton>
+                              </Tooltip>
+                            </Stack>
                             <Chip
                               label={statusLabel}
                               size="small"
@@ -591,27 +657,29 @@ export function MinerGridSection({
                                 },
                               }}
                             />
-                            <Stack direction="row" spacing={0.2} alignItems="center" sx={{ minWidth: 0, flexShrink: 1, maxWidth: "100%" }}>
-                              <Typography
-                                variant="subtitle1"
-                                fontWeight={800}
-                                noWrap
-                                title={titleText}
-                                sx={{ minWidth: 0 }}
-                              >
-                                {displayTitleText}
-                              </Typography>
-                              <Tooltip title="Rename">
-                                <IconButton
-                                  size="small"
-                                  color="primary"
-                                  sx={{ p: 0.35 }}
-                                  onClick={() => onStartAliasEdit(miner.minerId, alias || "")}
-                                >
-                                  <EditRoundedIcon fontSize="small" sx={{ fontSize: 16 }} />
-                                </IconButton>
-                              </Tooltip>
-                            </Stack>
+                            {linkedDevice ? (
+                              <StatusChip
+                                isActive={linkedDevice.on}
+                                label={linkedDevice.name}
+                                title={linkedDevice.name}
+                                truncate
+                                sx={{ maxWidth: 220 }}
+                              />
+                            ) : (
+                              <Chip
+                                size="small"
+                                color="error"
+                                variant="outlined"
+                                label={`- ${t(uiLang, "without_automat")}`}
+                                sx={{
+                                  borderWidth: 2,
+                                  fontWeight: 700,
+                                  "& .MuiChip-label": {
+                                    fontWeight: 700,
+                                  },
+                                }}
+                              />
+                            )}
                           </Stack>
                         </Stack>
                       )}
@@ -854,45 +922,46 @@ export function MinerGridSection({
                     </Typography>
                     </Stack>
                     <Stack direction="row" spacing={0.6} flexWrap="wrap" sx={{ flexShrink: 0, justifyContent: "flex-end" }}>
-                      {overheatLocked ? (
-                        <ActionButton
-                          variant="contained"
-                          color="success"
-                          onClick={() => onUnlockOverheatControl(miner.minerId)}
-                        >
-                          {t(uiLang, "unlock_control")}
-                        </ActionButton>
-                      ) : (
-                        <>
+                      {!manualPowerHold &&
+                        (overheatLocked ? (
                           <ActionButton
-                            variant={restartDisabledFinal ? "outlined" : "contained"}
-                            color="primary"
-                            disabled={restartDisabledFinal}
-                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.RESTART)}
-                            startIcon={restartInProgress ? <ButtonSpinnerIcon color={restartDisabledFinal ? "#94a3b8" : "currentColor"} /> : null}
-                          >
-                            {t(uiLang, "restart")}
-                          </ActionButton>
-                          <ActionButton
-                            variant={sleepDisabled ? "outlined" : "contained"}
-                            color="inherit"
-                            disabled={sleepDisabled}
-                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.SLEEP)}
-                            startIcon={pendingAction === CommandType.SLEEP ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
-                          >
-                            {t(uiLang, "sleep")}
-                          </ActionButton>
-                          <ActionButton
-                            variant={wakeDisabled ? "outlined" : "contained"}
+                            variant="contained"
                             color="success"
-                            disabled={wakeDisabled}
-                            onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.WAKE)}
-                            startIcon={wakeInProgress ? <ButtonSpinnerIcon color={wakeDisabled ? "#9ca3af" : "currentColor"} /> : null}
+                            onClick={() => onUnlockOverheatControl(miner.minerId)}
                           >
-                            {wakeInProgress ? t(uiLang, "waking") : t(uiLang, "wake")}
+                            {t(uiLang, "unlock_control")}
                           </ActionButton>
-                        </>
-                      )}
+                        ) : (
+                          <>
+                            <ActionButton
+                              variant={restartDisabledFinal ? "outlined" : "contained"}
+                              color="primary"
+                              disabled={restartDisabledFinal}
+                              onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.RESTART)}
+                              startIcon={restartInProgress ? <ButtonSpinnerIcon color={restartDisabledFinal ? "#94a3b8" : "currentColor"} /> : null}
+                            >
+                              {t(uiLang, "restart")}
+                            </ActionButton>
+                            <ActionButton
+                              variant={sleepDisabled ? "outlined" : "contained"}
+                              color="inherit"
+                              disabled={sleepDisabled}
+                              onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.SLEEP)}
+                              startIcon={pendingAction === CommandType.SLEEP ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
+                            >
+                              {t(uiLang, "sleep")}
+                            </ActionButton>
+                            <ActionButton
+                              variant={wakeDisabled ? "outlined" : "contained"}
+                              color="success"
+                              disabled={wakeDisabled}
+                              onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.WAKE)}
+                              startIcon={wakeInProgress ? <ButtonSpinnerIcon color={wakeDisabled ? "#9ca3af" : "currentColor"} /> : null}
+                            >
+                              {wakeInProgress ? t(uiLang, "waking") : t(uiLang, "wake")}
+                            </ActionButton>
+                          </>
+                        ))}
                     </Stack>
                   </Stack>
                 </Paper>
