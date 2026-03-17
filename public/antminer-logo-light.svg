@@ -1,0 +1,22 @@
+<svg width="860" height="260" viewBox="0 0 860 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M430 88C468.108 88 499 118.892 499 157V177H361V157C361 118.892 391.892 88 430 88ZM430 123C411.222 123 396 138.222 396 157V177H464V157C464 138.222 448.778 123 430 123Z"
+    fill="#F8FAFC"
+  />
+  <path d="M398 85C389 69 384 50 388 29C391 14 402 8 413 12" stroke="#F8FAFC" stroke-width="12" stroke-linecap="round" />
+  <path d="M462 85C466 67 472 50 482 36C490 26 502 25 511 34" stroke="#F8FAFC" stroke-width="12" stroke-linecap="round" />
+  <circle cx="412" cy="12" r="16" fill="#F8FAFC" />
+  <circle cx="510" cy="34" r="16" fill="#F8FAFC" />
+  <text
+    x="430"
+    y="246"
+    text-anchor="middle"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="140"
+    font-weight="500"
+    letter-spacing="7"
+    fill="#F8FAFC"
+  >ANTMINER</text>
+</svg>

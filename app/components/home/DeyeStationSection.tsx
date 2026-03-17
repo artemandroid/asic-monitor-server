@@ -163,6 +163,23 @@ export function DeyeStationSection({
       ? `${t(uiLang, "station_automats")} #${stationTitle}:`
       : `${t(uiLang, "station_automats")}:`;
   const addAutomatMenuOpen = Boolean(addAutomatAnchorEl);
+  const historyButtonSx = {
+    minWidth: 0,
+    px: 1.25,
+    py: 0.35,
+    borderRadius: 1.2,
+    fontSize: (themeCtx: typeof theme) => themeCtx.typography.body2.fontSize,
+    lineHeight: (themeCtx: typeof theme) => themeCtx.typography.body2.lineHeight,
+    color: "success.main",
+    borderColor: "success.main",
+    textTransform: "none",
+    whiteSpace: "nowrap",
+    "&:hover": {
+      color: "success.dark",
+      borderColor: "success.dark",
+      bgcolor: "rgba(46, 125, 50, 0.08)",
+    },
+  };
 
   return (
     <SectionPaper sx={{ mb: 1.25 }}>
@@ -177,16 +194,14 @@ export function DeyeStationSection({
         <Stack direction="row" alignItems="center" spacing={1.2} minWidth={0}>
           <SolarPowerRoundedIcon sx={{ fontSize: 18, color: "warning.light", flexShrink: 0 }} />
           <Typography variant="subtitle2" fontWeight={800}>
-            {deyeCollapsed
-              ? t(uiLang, "deye_station")
-              : `${t(uiLang, "deye_station")} (${stationTitle !== "-" ? `#${stationTitle}` : "-"})`}
+            {t(uiLang, "deye_station")}
           </Typography>
           <Stack
             direction="row"
-            spacing={1.6}
+            spacing={0.5}
             alignItems="center"
             minWidth={0}
-            sx={{ flexWrap: "wrap", rowGap: 0.8 }}
+            sx={{ flexWrap: "wrap", rowGap: 0.5 }}
           >
             <StatusChip
               isActive={deyeStation?.gridOnline}
@@ -236,6 +251,17 @@ export function DeyeStationSection({
                 </StatPill>
               </Tooltip>
             ) : null}
+            <Button
+              size="small"
+              variant="outlined"
+              sx={historyButtonSx}
+              onClick={(e) => {
+                e.stopPropagation();
+                setHistoryModalOpen(true);
+              }}
+            >
+              {t(uiLang, "more")}
+            </Button>
           </Stack>
         </Stack>
 
@@ -245,17 +271,6 @@ export function DeyeStationSection({
               ? t(uiLang, "updating")
               : `${t(uiLang, "updated")}: ${formatUpdatedAt(deyeStation?.updatedAt)}`}
           </Typography>
-          <Button
-            size="small"
-            variant="outlined"
-            sx={{ minWidth: 0, px: 0.8, py: 0.2, fontSize: 11 }}
-            onClick={(e) => {
-              e.stopPropagation();
-              setHistoryModalOpen(true);
-            }}
-          >
-            {t(uiLang, "details")}
-          </Button>
           <Typography variant="subtitle2" color="text.secondary">
             {deyeCollapsed ? "▸" : "▾"}
           </Typography>

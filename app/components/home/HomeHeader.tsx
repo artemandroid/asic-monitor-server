@@ -100,9 +100,14 @@ export function HomeHeader({
       <Stack direction="row" spacing={1} alignItems="center">
         <Box
           component="img"
-          src={isDark ? "/mining-control-logo-light.svg" : "/mining-control-logo-dark.svg"}
-          alt={t(uiLang, "mining_control")}
-          sx={{ width: headerUi.logoSize, height: headerUi.logoSize, display: "block", flexShrink: 0 }}
+          src={isDark ? "/antminer-logo-light.svg" : "/antminer-logo-dark.svg"}
+          alt="ANTMINER"
+          sx={{
+            display: "block",
+            flexShrink: 0,
+            height: Math.max(26, Math.round(headerUi.logoSize * 0.95)),
+            width: "auto",
+          }}
         />
       </Stack>
 

@@ -416,7 +416,7 @@ export function EnergyHistoryModal({ uiLang, todayData, onClose }: EnergyHistory
         </Stack>
       </DialogContent>
       <Box sx={{ px: 2, pb: 2, display: "flex", justifyContent: "flex-end" }}>
-        <CancelButton onClick={onClose}>{t(uiLang, "cancel")}</CancelButton>
+        <CancelButton onClick={onClose}>{t(uiLang, "ok")}</CancelButton>
       </Box>
     </Dialog>
   );
