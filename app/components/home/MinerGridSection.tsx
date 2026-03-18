@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useState, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import DragIndicatorRoundedIcon from "@mui/icons-material/DragIndicatorRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import PowerSettingsNewRoundedIcon from "@mui/icons-material/PowerSettingsNewRounded";
@@ -165,6 +171,27 @@ export function MinerGridSection({
     setDragStartIndex(null);
   };
 
+  const getDraggedId = (event?: ReactDragEvent<HTMLElement>) => {
+    const dataId = event?.dataTransfer?.getData("text/plain") ?? "";
+    const normalized = dataId.trim();
+    return normalized || draggedCardId;
+  };
+
+  const startCardDrag = (event: ReactDragEvent<HTMLElement>, minerId: string) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", minerId);
+    const previewHost = (event.currentTarget as HTMLElement).closest("[data-miner-paper='1']");
+    if (previewHost && typeof event.dataTransfer.setDragImage === "function") {
+      event.dataTransfer.setDragImage(previewHost, 24, 24);
+    }
+    // Let browser capture native drag preview first, then hide source card.
+    window.requestAnimationFrame(() => {
+      setDraggedCardId(minerId);
+      setDragOverCardId(null);
+      setDragStartIndex(orderedCards.indexOf(minerId));
+    });
+  };
+
   return (
     <Box>
       {miners.length === 0 && (
@@ -179,12 +206,13 @@ export function MinerGridSection({
         spacing={1.25}
         alignItems="stretch"
         onDragOver={(event) => {
-          if (!draggedCardId) return;
+          const currentDraggedId = getDraggedId(event);
+          if (!currentDraggedId) return;
           event.preventDefault();
         }}
         onDrop={(event) => {
           event.preventDefault();
-          const droppedId = event.dataTransfer.getData("text/plain") || draggedCardId;
+          const droppedId = getDraggedId(event);
           if (!droppedId) {
             cleanupDrag();
             return;
@@ -208,12 +236,14 @@ export function MinerGridSection({
                 >
                   <Box
                     onDragOver={(event) => {
-                      if (!draggedCardId) return;
+                      const currentDraggedId = getDraggedId(event);
+                      if (!currentDraggedId) return;
                       event.preventDefault();
                     }}
                     onDrop={(event) => {
                       event.preventDefault();
-                      const droppedId = event.dataTransfer.getData("text/plain") || draggedCardId;
+                      event.stopPropagation();
+                      const droppedId = getDraggedId(event);
                       if (droppedId) {
                         const idx = renderCardIds.indexOf(PLACEHOLDER_ID);
                         onReorderCardToIndex(droppedId, idx >= 0 ? idx : 0);
@@ -477,25 +507,19 @@ export function MinerGridSection({
                 data-miner-card="1"
               >
                 <Paper
+                  data-miner-paper="1"
                   draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", miner.minerId);
-                    // Let browser capture native drag preview first, then hide source card.
-                    window.requestAnimationFrame(() => {
-                      setDraggedCardId(miner.minerId);
-                      setDragOverCardId(null);
-                      setDragStartIndex(orderedCards.indexOf(miner.minerId));
-                    });
-                  }}
+                  onDragStart={(event) => startCardDrag(event, miner.minerId)}
                   onDragOver={(event) => {
-                    if (!draggedCardId || draggedCardId === miner.minerId) return;
+                    const droppedId = getDraggedId(event);
+                    if (!droppedId || droppedId === miner.minerId) return;
                     event.preventDefault();
                     setDragOverCardId(miner.minerId);
                   }}
                   onDrop={(event) => {
                     event.preventDefault();
-                    const droppedId = event.dataTransfer.getData("text/plain") || draggedCardId;
+                    event.stopPropagation();
+                    const droppedId = getDraggedId(event);
                     if (droppedId && droppedId !== miner.minerId) {
                       onReorderCard(droppedId, miner.minerId);
                     }
@@ -695,10 +719,19 @@ export function MinerGridSection({
                         <IconButton
                           color="primary"
                           size="small"
+                          draggable
                           sx={{ cursor: "grab" }}
                           onMouseDown={(event) => {
                             // Keep drag-handle click from toggling other clickable controls in header.
                             event.stopPropagation();
+                          }}
+                          onDragStart={(event) => {
+                            event.stopPropagation();
+                            startCardDrag(event, miner.minerId);
+                          }}
+                          onDragEnd={(event) => {
+                            event.stopPropagation();
+                            cleanupDrag();
                           }}
                         >
                           <DragIndicatorRoundedIcon fontSize="small" />

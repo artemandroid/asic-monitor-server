@@ -102,7 +102,7 @@ export const enMessages = {
   "m": "m",
   "miner_settings": "Miner Settings",
   "miner_is_offline": "Miner is offline",
-  "manual_power_hold": "AUTO OFF (manual hold)",
+  "manual_power_hold": "INACTIVE",
   "manual_power_hold_active_turn_on_first": "Manual OFF hold is active. Turn ON first.",
   "power_button_turn_off_pause_automation": "Turn OFF and pause automation",
   "power_button_turn_on_resume_automation": "Turn ON and resume automation",
