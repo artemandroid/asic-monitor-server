@@ -37,13 +37,16 @@ import { StatusChip } from "@/app/components/ui/StatusChip";
 import { useTheme, type Theme } from "@mui/material/styles";
 import {
   CommandType,
+  ControlMode,
   MinerControlPhase,
+  MinerStatus,
   ReadStatus,
   type MinerControlState,
   type MinerMetric,
   type MinerState,
 } from "@/app/lib/types";
 import { t, type UiLang } from "@/app/lib/ui-lang";
+import { deriveControlMode, deriveMinerStatus, isBusyStatus } from "@/app/lib/miner-control-utils";
 import { ButtonSpinnerIcon } from "@/app/components/icons";
 
 type TuyaLinkedDevice = {
@@ -290,6 +293,22 @@ export function MinerGridSection({
               control?.phase ?? serverPendingPhase ?? (hasServerWarmup ? MinerControlPhase.WARMING_UP : null);
             const pendingAction = pendingActionByMiner[miner.minerId];
             const powerHoldPending = pendingPowerHoldByMiner[miner.minerId] === true;
+
+            // Single source of truth for this card. Chip, buttons, spinners and the
+            // hashrate area all derive from `status`, so they flip together at the
+            // same transition instead of drifting one render apart.
+            const status = deriveMinerStatus(miner, control, pendingAction, nowMs);
+            const isBusy = isBusyStatus(status);
+            // Orthogonal "who controls" axis (AUTO / MANUAL_PAUSE / OVERHEAT_HOLD /
+            // MANUAL_OFF). Composed with `status` below to label a manual pause.
+            const controlMode = deriveControlMode(miner);
+            const isManualPause =
+              controlMode === ControlMode.MANUAL_PAUSE && status === MinerStatus.PAUSED;
+            // Safety net for the rare "manually paused, then woken out-of-band" case:
+            // the miner mines but automation is still frozen. Surface it so the freeze
+            // is never invisible (a manual WAKE / RESTART / power ON clears it).
+            const showAutomationPausedBadge =
+              controlMode === ControlMode.MANUAL_PAUSE && status !== MinerStatus.PAUSED;
             const minerMode = typeof metric?.minerMode === "number" ? metric.minerMode : null;
             const isActuallyOffline = online === false;
             const isActuallySleeping = online === true && minerMode === 1;
@@ -314,6 +333,8 @@ export function MinerGridSection({
               ((runtimeSeconds !== null && runtimeSeconds <= 0) ||
                 (hasZeroBoardHashrates && hasZeroBoardFreqs));
             const isSleepingLike =
+              status === MinerStatus.PAUSED ||
+              status === MinerStatus.PAUSE_REQUESTED ||
               isActuallySleeping ||
               looksSleepingByTelemetry ||
               effectivePhase === MinerControlPhase.SLEEPING ||
@@ -331,33 +352,44 @@ export function MinerGridSection({
               typeof miner.overheatLastTempC === "number" && Number.isFinite(miner.overheatLastTempC)
                 ? Number(miner.overheatLastTempC.toFixed(1)).toString()
                 : null;
-            const statusLabel = manualPowerHold
-              ? t(uiLang, "manual_power_hold")
-              : overheatLocked
-              ? `${t(uiLang, "locked")}${overheatTempDisplay ? ` (${overheatTempDisplay}°C)` : ""}`
-              : isNoAccess
-                ? t(uiLang, "no_access")
-                : isActuallyOffline
-                  ? t(uiLang, "offline")
-                  : isSleepingLike
-                    ? t(uiLang, "sleep")
-                    : online === true
-                      ? t(uiLang, "online")
-                      : t(uiLang, "unknown");
-            const statusColor: "success" | "default" | "error" = overheatLocked
-              ? "error"
-              : manualPowerHold
-                ? "default"
-              : online === true && !isSleepingLike
-                ? "success"
-                : "default";
-            const statusVariant: "filled" | "outlined" = overheatLocked
-              ? "outlined"
-              : manualPowerHold
-                ? "outlined"
-              : online === true && !isSleepingLike
-                ? "filled"
-                : "outlined";
+            const statusLabel = ((): string => {
+              switch (status) {
+                case MinerStatus.MANUAL_OFF:
+                  return t(uiLang, "manual_power_hold");
+                case MinerStatus.OVERHEAT_LOCKED:
+                  return `${t(uiLang, "locked")}${overheatTempDisplay ? ` (${overheatTempDisplay}°C)` : ""}`;
+                case MinerStatus.PAUSE_REQUESTED:
+                  return t(uiLang, "status_pause_requested");
+                case MinerStatus.PAUSED:
+                  return isManualPause ? t(uiLang, "manual_pause") : t(uiLang, "sleep");
+                case MinerStatus.WAKE_REQUESTED:
+                  return t(uiLang, "status_wake_requested");
+                case MinerStatus.WAKING_UP:
+                  return t(uiLang, "waking");
+                case MinerStatus.RESTART_REQUESTED:
+                  return t(uiLang, "status_restart_requested");
+                case MinerStatus.RESTART_IN_PROGRESS:
+                  return t(uiLang, "status_restart_in_progress");
+                case MinerStatus.NO_ACCESS:
+                  return t(uiLang, "no_access");
+                case MinerStatus.OFFLINE:
+                  return t(uiLang, "offline");
+                case MinerStatus.NORMAL:
+                  return t(uiLang, "online");
+                default:
+                  return t(uiLang, "unknown");
+              }
+            })();
+            const statusColor: "success" | "default" | "error" | "warning" =
+              status === MinerStatus.OVERHEAT_LOCKED
+                ? "error"
+                : status === MinerStatus.NORMAL
+                  ? "success"
+                  : isBusy
+                    ? "warning"
+                    : "default";
+            const statusVariant: "filled" | "outlined" =
+              status === MinerStatus.NORMAL || isBusy ? "filled" : "outlined";
             const hasOnlineBorder = online === true && !isSleepingLike && !manualPowerHold;
             const hasOfflineBorder = online === false;
             const metricCardSx = {
@@ -370,11 +402,8 @@ export function MinerGridSection({
                 hasOnlineBorder ? t.palette.success.main : hasOfflineBorder ? t.palette.grey[600] : t.palette.grey[500],
             } as const;
 
-            const buttonsLocked =
-              online === true &&
-              effectivePhase === MinerControlPhase.RESTARTING ||
-              (online === true && effectivePhase === MinerControlPhase.WAKING) ||
-              (online === true && effectivePhase === MinerControlPhase.WARMING_UP);
+            // Any in-flight/executing control op locks every control button.
+            const buttonsLocked = isBusy;
             const hasPendingAction = Boolean(pendingAction) || powerHoldPending;
             const restartDisabled =
               hasPendingAction ||
@@ -389,15 +418,14 @@ export function MinerGridSection({
             const wakeDisabled =
               hasPendingAction || buttonsLocked || overheatLocked || manualPowerHold || !canAttemptWake;
             const restartDisabledFinal = restartDisabled || overheatLocked;
+            // Spinner while the restart is requested (server has it) or in progress
+            // (ASIC executed it, miner rebooting/warming) — same for sleep/wake.
             const restartInProgress =
-              pendingAction === CommandType.RESTART ||
-              (online === true && effectivePhase === MinerControlPhase.RESTARTING) ||
-              (online === true && effectivePhase === MinerControlPhase.WARMING_UP && control?.source === "RESTART");
+              status === MinerStatus.RESTART_REQUESTED ||
+              status === MinerStatus.RESTART_IN_PROGRESS;
+            const sleepInProgress = status === MinerStatus.PAUSE_REQUESTED;
             const wakeInProgress =
-              pendingAction === CommandType.WAKE ||
-              (online === true && effectivePhase === MinerControlPhase.WAKING) ||
-              (online === true && effectivePhase === MinerControlPhase.WARMING_UP &&
-                (control?.source === "WAKE" || control?.source === "POWER_ON"));
+              status === MinerStatus.WAKE_REQUESTED || status === MinerStatus.WAKING_UP;
             const powerButtonTitle = powerHoldPending
               ? t(uiLang, "updating")
               : manualPowerHold
@@ -465,9 +493,10 @@ export function MinerGridSection({
             const expectedMh = metric?.expectedHashrate;
             const currentMh = metric?.hashrate;
             const inStartupPhase =
-              effectivePhase === "RESTARTING" ||
-              effectivePhase === "WAKING" ||
-              effectivePhase === "WARMING_UP";
+              status === MinerStatus.RESTART_REQUESTED ||
+              status === MinerStatus.RESTART_IN_PROGRESS ||
+              status === MinerStatus.WAKE_REQUESTED ||
+              status === MinerStatus.WAKING_UP;
             const isOffline = online === false;
             const boardHashrateAbnormalByState = rows.some((row) =>
               String(row.state).toLowerCase().includes("stateabnormal"),
@@ -663,6 +692,7 @@ export function MinerGridSection({
                               size="small"
                               color={statusColor}
                               variant={statusVariant}
+                              title={isManualPause ? t(uiLang, "manual_pause_hint") : undefined}
                               sx={{
                                 maxWidth: 190,
                                 borderWidth:
@@ -681,6 +711,16 @@ export function MinerGridSection({
                                 },
                               }}
                             />
+                            {showAutomationPausedBadge ? (
+                              <Chip
+                                size="small"
+                                color="warning"
+                                variant="outlined"
+                                label={t(uiLang, "automation_paused")}
+                                title={t(uiLang, "manual_pause_hint")}
+                                sx={{ maxWidth: 190, fontWeight: 700 }}
+                              />
+                            ) : null}
                             {linkedDevice ? (
                               <StatusChip
                                 isActive={linkedDevice.on}
@@ -980,7 +1020,7 @@ export function MinerGridSection({
                               color="inherit"
                               disabled={sleepDisabled}
                               onClick={() => onRequestMinerCommandConfirm(miner.minerId, CommandType.SLEEP)}
-                              startIcon={pendingAction === CommandType.SLEEP ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
+                              startIcon={sleepInProgress ? <ButtonSpinnerIcon color={sleepDisabled ? "#9ca3af" : "currentColor"} /> : null}
                             >
                               {t(uiLang, "sleep")}
                             </ActionButton>

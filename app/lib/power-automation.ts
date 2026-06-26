@@ -19,6 +19,33 @@ import { useGlobalSlice } from "@/app/lib/global-state";
 const NOTIFY_POWER_AUTOMATION = "POWER_AUTOMATION";
 const NOTIFY_OVERHEAT_WAKE_DEFERRED = "OVERHEAT_WAKE_DEFERRED";
 const NOTIFY_OVERHEAT_WAKE_SENT = "OVERHEAT_WAKE_SENT";
+const NOTIFY_PROTECTIVE_SLEEP = "PROTECTIVE_SLEEP";
+const NOTIFY_PROTECTIVE_OFF = "PROTECTIVE_OFF";
+const NOTIFY_PROTECTIVE_OFF_DEFERRED = "PROTECTIVE_OFF_DEFERRED";
+const NOTIFY_PROTECTIVE_WAKE = "PROTECTIVE_WAKE";
+
+const PROTECTIVE_REASON = {
+  OVERHEAT: "OVERHEAT",
+  CRITICAL_BATTERY: "CRITICAL_BATTERY",
+  GRID_LOSS: "GRID_LOSS",
+  BATTERY_THRESHOLD: "BATTERY_THRESHOLD",
+} as const;
+type ProtectiveReason = (typeof PROTECTIVE_REASON)[keyof typeof PROTECTIVE_REASON];
+
+function protectiveReasonLabel(reason: string | null | undefined): string {
+  switch (reason) {
+    case PROTECTIVE_REASON.OVERHEAT:
+      return "overheat";
+    case PROTECTIVE_REASON.CRITICAL_BATTERY:
+      return "critical battery";
+    case PROTECTIVE_REASON.GRID_LOSS:
+      return "grid loss";
+    case PROTECTIVE_REASON.BATTERY_THRESHOLD:
+      return "low battery";
+    default:
+      return "protection";
+  }
+}
 
 function extractWirePower(station: Awaited<ReturnType<typeof fetchDeyeStationSnapshot>>): number | null {
   const candidates = station.apiSignals.filter((signal) => /(^|\.|_)wirepower$/i.test(signal.key));
@@ -80,6 +107,48 @@ async function clearOverheatLock(minerId: string) {
   });
 }
 
+// ─── Staged protective shutdown helpers ─────────────────────────────────────────
+// A protective shutdown first sleeps the miner (fans keep cooling the boards) and,
+// after the cooldown window, cuts mains via the bound automat. On power restore a
+// WAKE is issued because the ASIC persists sleep mode across a power cycle.
+
+async function beginProtectiveSleep(minerId: string, reason: ProtectiveReason) {
+  if (!prisma) return;
+  await prisma.miner.updateMany({
+    where: { id: minerId },
+    data: {
+      protectiveShutdownAt: new Date(),
+      protectiveShutdownReason: reason,
+      protectiveShutdownPhase: "SLEEPING",
+      pendingWakeAfterPowerOn: false,
+    },
+  });
+}
+
+async function markProtectivePoweredOff(minerId: string) {
+  if (!prisma) return;
+  await prisma.miner.updateMany({
+    where: { id: minerId },
+    data: {
+      protectiveShutdownPhase: "OFF",
+      pendingWakeAfterPowerOn: true,
+    },
+  });
+}
+
+async function clearProtectiveState(minerId: string, opts: { clearPendingWake?: boolean } = {}) {
+  if (!prisma) return;
+  await prisma.miner.updateMany({
+    where: { id: minerId },
+    data: {
+      protectiveShutdownAt: null,
+      protectiveShutdownReason: null,
+      protectiveShutdownPhase: null,
+      ...(opts.clearPendingWake ? { pendingWakeAfterPowerOn: false } : {}),
+    },
+  });
+}
+
 async function enqueueMinerCommand(minerId: string, type: CommandType.SLEEP | CommandType.WAKE) {
   if (!prisma) return false;
   const pending = await prisma.command.findFirst({
@@ -136,6 +205,14 @@ export async function runPowerAutomation(): Promise<void> {
           overheatLockedAt: true,
           overheatSleepMinutes: true,
           manualPowerHold: true,
+          manualPauseHold: true,
+          protectiveShutdownAt: true,
+          protectiveShutdownReason: true,
+          protectiveShutdownPhase: true,
+          pendingWakeAfterPowerOn: true,
+          overheatActionOverride: true,
+          protectiveSleepMinutesOverride: true,
+          lastOnlineAt: true,
           lastMetric: true,
         },
       }),
@@ -179,13 +256,25 @@ export async function runPowerAutomation(): Promise<void> {
 
       const overheatLocked = miner.overheatLocked === true;
       const manualPowerHold = miner.manualPowerHold === true;
+      // Operator pause (manual SLEEP): freeze automation for this miner exactly like
+      // a manual power hold, so a paused miner is not auto-woken / auto-toggled.
+      // Cleared by a manual WAKE or manual power ON.
+      const manualPauseHold = miner.manualPauseHold === true;
       const overheatSleepMinutes = Math.max(
         5,
         Math.floor(miner.overheatSleepMinutes ?? DEFAULT_OVERHEAT_SLEEP_MINUTES),
       );
       const overheatSleepDurationMs = overheatSleepMinutes * 60 * 1000;
 
-      if (manualPowerHold) {
+      // Effective protective-sleep window: per-miner override falls back to global default.
+      // (overheatAction NAP/SHUTDOWN override is wired in a later phase; overheat stays NAP.)
+      const protectiveSleepMinutes = Math.max(
+        1,
+        Math.floor(miner.protectiveSleepMinutesOverride ?? settings.protectiveSleepMinutes ?? 5),
+      );
+      const protectiveSleepDurationMs = protectiveSleepMinutes * 60 * 1000;
+
+      if (manualPowerHold || manualPauseHold) {
         delete state.overheatWakePendingByMiner[miner.id];
         delete state.autoOffRequestedByMiner[miner.id];
         delete state.thresholdAutoOffAtByMiner[miner.id];
@@ -272,8 +361,10 @@ export async function runPowerAutomation(): Promise<void> {
         batteryBlocksAutoOn ||
         batteryOffSafetyBlocksGenerationAutoOn;
 
-      // Overheat scenario: sleep miner for 30 minutes, then auto-wake.
-      if (overheatLocked) {
+      // Overheat NAP: sleep miner for the cooldown window, then auto-wake.
+      // A concurrent battery/grid emergency (shouldOff) takes precedence: skip the
+      // NAP and fall through to the staged protective shutdown so mains is cut.
+      if (overheatLocked && !shouldOff) {
         const lockedAtMs = miner.overheatLockedAt ? new Date(miner.overheatLockedAt).getTime() : NaN;
         if (Number.isFinite(lockedAtMs) && now >= lockedAtMs + overheatSleepDurationMs) {
           const hasPowerPolicyOff =
@@ -325,48 +416,131 @@ export async function runPowerAutomation(): Promise<void> {
       if (!hasBoundDevice) continue;
       if (!device) continue;
 
-      if (shouldOff && (tuyaUnavailable || deviceUnavailable)) {
-        const lockKey = `${miner.id}:SLEEP_FALLBACK`;
-        const lockedUntil = state.lockByKey[lockKey] ?? 0;
-        if (now >= lockedUntil && !isSleepingLike) {
-          state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
-          const queued = await enqueueMinerCommand(miner.id, CommandType.SLEEP);
-          if (queued) {
+      // ── Recovery: a protectively powered-off miner is back on mains. The ASIC
+      //    persists sleep mode across a power cycle, so issue WAKE once it has booted.
+      if (miner.pendingWakeAfterPowerOn && !shouldOff) {
+        const shutdownMs = miner.protectiveShutdownAt ? new Date(miner.protectiveShutdownAt).getTime() : 0;
+        const onlineMs = miner.lastOnlineAt ? new Date(miner.lastOnlineAt).getTime() : 0;
+        // Act only once the ASIC has demonstrably rebooted and reported AFTER mains was
+        // cut, so a stale pre-cut online reading cannot fire a premature WAKE.
+        const bootedAfterShutdown =
+          device.on === true && lastMetric?.online === true && onlineMs > shutdownMs;
+        if (bootedAfterShutdown) {
+          const lockKey = `${miner.id}:PWAKE`;
+          if (now >= (state.lockByKey[lockKey] ?? 0)) {
+            state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
+            if (isSleepingLike) {
+              const reasonLabel = protectiveReasonLabel(miner.protectiveShutdownReason);
+              const queued = await enqueueMinerCommand(miner.id, CommandType.WAKE);
+              await clearProtectiveState(miner.id, { clearPendingWake: true });
+              if (queued) {
+                await notify(
+                  `Power restored for ${miner.id}: WAKE sent to exit sleep (was ${reasonLabel} shutdown).`,
+                  miner.id,
+                  NOTIFY_PROTECTIVE_WAKE,
+                );
+              }
+            } else {
+              // Booted straight into mining mode (sleep not persisted) — already awake;
+              // just reconcile the protective state so the flag can't get stuck.
+              await clearProtectiveState(miner.id, { clearPendingWake: true });
+            }
+          }
+          continue;
+        }
+        // Powered but not booted yet, or still off — fall through so the ON logic restores power.
+      }
+
+      // ── Staged protective shutdown (battery / grid): sleep to cool boards, then cut mains. ──
+      if (shouldOff) {
+        const reason: ProtectiveReason = shouldOffByCriticalBattery
+          ? PROTECTIVE_REASON.CRITICAL_BATTERY
+          : shouldOffByGridLoss
+            ? PROTECTIVE_REASON.GRID_LOSS
+            : PROTECTIVE_REASON.BATTERY_THRESHOLD;
+
+        // Stage 1: start the cooling sleep (works even when the automat is unreachable).
+        if (!miner.protectiveShutdownAt) {
+          const lockKey = `${miner.id}:PROT_SLEEP`;
+          if (now >= (state.lockByKey[lockKey] ?? 0)) {
+            state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
+            if (!isSleepingLike) await enqueueMinerCommand(miner.id, CommandType.SLEEP);
+            await beginProtectiveSleep(miner.id, reason);
             await notify(
-              `Tuya unavailable for ${miner.id}; fallback SLEEP command queued.`,
+              `${miner.id}: ${protectiveReasonLabel(reason)} — sleeping ${protectiveSleepMinutes} min to cool boards, then powering off via automat.`,
               miner.id,
+              NOTIFY_PROTECTIVE_SLEEP,
             );
           }
+          continue;
+        }
+
+        // Stage 2: after the cooldown window, cut mains via the automat.
+        const startedAtMs = new Date(miner.protectiveShutdownAt).getTime();
+        const cooled = Number.isFinite(startedAtMs) && now >= startedAtMs + protectiveSleepDurationMs;
+        if (!cooled) continue;
+
+        if (tuyaUnavailable || deviceUnavailable) {
+          const lockKey = `${miner.id}:PROT_OFF_DEFERRED`;
+          if (now >= (state.lockByKey[lockKey] ?? 0)) {
+            // Long interval: only a periodic reminder while the automat stays unreachable.
+            state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS * 20;
+            await notify(
+              `${miner.id}: cooldown finished but the automat is unavailable — staying asleep, power not cut.`,
+              miner.id,
+              NOTIFY_PROTECTIVE_OFF_DEFERRED,
+            );
+          }
+          continue;
+        }
+
+        if (device.on !== false && miner.protectiveShutdownPhase !== "OFF") {
+          const lockKey = `${miner.id}:OFF`;
+          if (now >= (state.lockByKey[lockKey] ?? 0)) {
+            state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
+            if (reason === PROTECTIVE_REASON.BATTERY_THRESHOLD) {
+              state.thresholdAutoOffAtByMiner[miner.id] = now;
+            } else {
+              delete state.thresholdAutoOffAtByMiner[miner.id];
+            }
+            await setTuyaSwitch(device.id, false, device.switchCode);
+            await patchTuyaDeviceSwitchState(device.id, false);
+            await markProtectivePoweredOff(miner.id);
+            // A concurrent overheat lock is moot once mains is cut; clear it so the
+            // overheat NAP machine does not fight the protective shutdown on restore.
+            if (overheatLocked) await clearOverheatLock(miner.id);
+            await notify(
+              reason === PROTECTIVE_REASON.CRITICAL_BATTERY
+                ? `${miner.id}: cooled — power cut via ${device.name} (grid OFF, battery < ${criticalOffBatteryPercent}%).`
+                : `${miner.id}: cooled — power cut via ${device.name} (${protectiveReasonLabel(reason)}).`,
+              miner.id,
+              NOTIFY_PROTECTIVE_OFF,
+            );
+          }
+        } else if (device.on === false && miner.protectiveShutdownPhase !== "OFF") {
+          // Relay already open (we cut it earlier, or it was opened externally) but the
+          // OFF phase was never recorded — arm the recovery path so WAKE-on-restore works.
+          await markProtectivePoweredOff(miner.id);
         }
         continue;
       }
 
-      if (shouldOff && device.on !== false) {
-        if (state.autoOffRequestedByMiner[miner.id] === true) {
-          continue;
-        }
-        const lockKey = `${miner.id}:OFF`;
-        const lockedUntil = state.lockByKey[lockKey] ?? 0;
-        if (now >= lockedUntil) {
-          state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
-          if (shouldOffByThreshold) {
-            state.thresholdAutoOffAtByMiner[miner.id] = now;
-          } else {
-            delete state.thresholdAutoOffAtByMiner[miner.id];
-          }
-          await setTuyaSwitch(device.id, false, device.switchCode);
-          await patchTuyaDeviceSwitchState(device.id, false);
-          if (shouldOffByCriticalBattery) {
+      // shouldOff is false: if a cooling sleep was started but conditions cleared before the
+      // power-off step, wake the miner and clear the protective state.
+      if (miner.protectiveShutdownAt && !miner.pendingWakeAfterPowerOn) {
+        if (isSleepingLike && lastMetric?.online === true) {
+          const lockKey = `${miner.id}:PWAKE`;
+          if (now >= (state.lockByKey[lockKey] ?? 0)) {
+            state.lockByKey[lockKey] = now + POWER_AUTOMATION_DEBOUNCE_MS;
+            await enqueueMinerCommand(miner.id, CommandType.WAKE);
             await notify(
-              `Auto OFF requested for ${device.name}: grid is OFF and battery < ${criticalOffBatteryPercent}%.`,
+              `${miner.id}: conditions cleared during cooldown — WAKE sent.`,
               miner.id,
+              NOTIFY_PROTECTIVE_WAKE,
             );
-          } else {
-            await notify(`Auto OFF requested for ${device.name}.`, miner.id);
           }
-          state.autoOffRequestedByMiner[miner.id] = true;
         }
-        continue;
+        await clearProtectiveState(miner.id, { clearPendingWake: true });
       }
 
       if (!autoOnBlocked && (shouldOnImmediate || shouldOnWhenGridOnline) && (tuyaUnavailable || deviceUnavailable)) {

@@ -38,6 +38,18 @@ model Miner {
   overheatLockedAt DateTime?
   overheatLastTempC Float?
   manualPowerHold   Boolean @default(false)
+  manualPauseHold   Boolean @default(false)
+  // Protective shutdown runtime state (staged: sleep to cool, then cut relay).
+  protectiveShutdownAt     DateTime?
+  protectiveShutdownReason String?  // OVERHEAT | CRITICAL_BATTERY | GRID_LOSS | BATTERY_THRESHOLD
+  protectiveShutdownPhase  String?  // SLEEPING | OFF
+  pendingWakeAfterPowerOn  Boolean @default(false)
+  // Per-miner overrides for the global protective/pause defaults (null = inherit global).
+  overheatActionOverride          String?
+  protectiveSleepMinutesOverride  Int?
+  pauseReactOverheatOverride          Boolean?
+  pauseReactLowHashrateOverride       Boolean?
+  pauseReactBatteryDischargeOverride  Boolean?
   lastSeen            DateTime?
   online              Boolean?
   readStatus          String?
@@ -76,6 +88,12 @@ model Settings {
   criticalBatteryOffPercent Float   @default(30)
   useNetMeteringForGreenTariff Boolean @default(false)
   miningStartDate          DateTime?
+  // Global defaults for protective shutdown / pause-exceptions (overridable per miner).
+  protectiveSleepMinutes   Int      @default(5)
+  overheatAction           String   @default("NAP") // NAP = sleep then auto-wake; SHUTDOWN = sleep then power off
+  pauseReactOverheat       Boolean  @default(true)
+  pauseReactLowHashrate    Boolean  @default(true)
+  pauseReactBatteryDischarge Boolean @default(true)
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 }

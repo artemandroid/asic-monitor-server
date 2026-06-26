@@ -139,7 +139,19 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
     await prisma.miner.update({
       where: { id },
-      data: { manualPowerHold: holdEnabled },
+      // Manual ON resumes the miner: lift any manual-pause hold and clear an in-flight
+      // protective shutdown so automation controls it again. Manual OFF only sets the
+      // power hold (it dominates).
+      data: holdEnabled
+        ? { manualPowerHold: true }
+        : {
+            manualPowerHold: false,
+            manualPauseHold: false,
+            protectiveShutdownAt: null,
+            protectiveShutdownReason: null,
+            protectiveShutdownPhase: null,
+            pendingWakeAfterPowerOn: false,
+          },
     });
 
     let cancelledCount = 0;
@@ -233,6 +245,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       });
     }
     miner.manualPowerHold = holdEnabled;
+    if (!holdEnabled) miner.manualPauseHold = false;
     minerStates.set(id, miner);
 
     let cancelledCount = 0;

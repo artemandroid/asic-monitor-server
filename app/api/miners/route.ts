@@ -46,6 +46,31 @@ export async function GET(request: NextRequest) {
         pendingByMiner.set(cmd.minerId, cmd.type);
       }
     }
+    // Only the last hour matters: the client uses lastCommand solely to detect a
+    // still-in-progress restart/wake, which is time-bounded. Older rows can never
+    // change a status, so we skip them and keep the query bounded as history grows.
+    const recentCommands = await prisma.command.findMany({
+      where: {
+        type: { in: [CommandType.RESTART, CommandType.SLEEP, CommandType.WAKE] },
+        minerId: { in: [...allowedMinerIds] },
+        createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const lastCommandByMiner = new Map<
+      string,
+      { type: string; status: string; executedAt: Date | null; createdAt: Date }
+    >();
+    for (const cmd of recentCommands) {
+      if (!lastCommandByMiner.has(cmd.minerId)) {
+        lastCommandByMiner.set(cmd.minerId, {
+          type: cmd.type,
+          status: cmd.status,
+          executedAt: cmd.executedAt,
+          createdAt: cmd.createdAt,
+        });
+      }
+    }
     const list = miners.filter((miner: { id: string }) => allowedMinerIds.has(miner.id)).map((miner: {
       id: string;
       lastSeen: Date | null;
@@ -69,12 +94,23 @@ export async function GET(request: NextRequest) {
       overheatLockedAt: Date | null;
       overheatLastTempC: number | null;
       manualPowerHold: boolean;
+      manualPauseHold: boolean;
       lastMetric: unknown;
     }) => ({
       minerId: miner.id,
       lastSeen: miner.lastSeen?.toISOString() ?? null,
       lastRestartAt: miner.lastRestartAt?.toISOString() ?? null,
       pendingCommandType: pendingByMiner.get(miner.id) ?? null,
+      lastCommand: (() => {
+        const c = lastCommandByMiner.get(miner.id);
+        if (!c) return null;
+        return {
+          type: c.type,
+          status: c.status,
+          executedAt: c.executedAt?.toISOString() ?? null,
+          createdAt: c.createdAt.toISOString(),
+        };
+      })(),
       expectedHashrate: miner.expectedHashrate ?? undefined,
       autoRestartEnabled: miner.autoRestartEnabled,
       postRestartGraceMinutes: miner.postRestartGraceMinutes,
@@ -96,6 +132,7 @@ export async function GET(request: NextRequest) {
       overheatLockedAt: miner.overheatLockedAt?.toISOString() ?? null,
       overheatLastTempC: miner.overheatLastTempC,
       manualPowerHold: miner.manualPowerHold === true,
+      manualPauseHold: miner.manualPauseHold === true,
       lastMetric: miner.lastMetric ?? null,
     }));
     return NextResponse.json(list);
@@ -116,6 +153,24 @@ export async function GET(request: NextRequest) {
               cmd.status === CommandStatus.PENDING &&
               (cmd.type === CommandType.RESTART || cmd.type === CommandType.SLEEP || cmd.type === CommandType.WAKE),
           )?.type ?? null,
+        lastCommand: (() => {
+          const c = commands
+            .filter(
+              (cmd) =>
+                cmd.minerId === miner.minerId &&
+                (cmd.type === CommandType.RESTART ||
+                  cmd.type === CommandType.SLEEP ||
+                  cmd.type === CommandType.WAKE),
+            )
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+          if (!c) return null;
+          return {
+            type: c.type,
+            status: c.status,
+            executedAt: c.executedAt ?? null,
+            createdAt: c.createdAt,
+          };
+        })(),
         expectedHashrate: miner.expectedHashrate ?? undefined,
         autoRestartEnabled: miner.autoRestartEnabled ?? false,
         postRestartGraceMinutes: miner.postRestartGraceMinutes ?? 10,
@@ -137,6 +192,7 @@ export async function GET(request: NextRequest) {
         overheatLockedAt: miner.overheatLockedAt ?? null,
         overheatLastTempC: miner.overheatLastTempC ?? null,
         manualPowerHold: miner.manualPowerHold ?? false,
+        manualPauseHold: miner.manualPauseHold ?? false,
         lastMetric: miner.lastMetric ?? null,
       }));
     return NextResponse.json(list);

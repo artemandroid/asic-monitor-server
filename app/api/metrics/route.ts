@@ -531,6 +531,10 @@ export async function POST(request: NextRequest) {
         existing?.autoPowerOnBatteryAbovePercent ?? existing?.autoPowerOffBatteryBelowPercent ?? null,
       autoPowerRestoreDelayMinutes: existing?.autoPowerRestoreDelayMinutes ?? 10,
       manualPowerHold: existing?.manualPowerHold ?? false,
+      // This branch rebuilds the whole entry, so the manual-pause hold must be
+      // carried over explicitly (like manualPowerHold above) or a metric ingest
+      // would silently un-pause the miner in memory mode.
+      manualPauseHold: existing?.manualPauseHold ?? false,
       overheatProtectionEnabled: existing?.overheatProtectionEnabled ?? true,
       overheatShutdownTempC: existing?.overheatShutdownTempC ?? 83,
       overheatSleepMinutes: existing?.overheatSleepMinutes ?? 30,

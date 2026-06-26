@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { Command, CommandStatus, CommandType } from "@/app/lib/types";
 import { prisma } from "@/app/lib/prisma";
 import { commands, minerStates } from "@/app/lib/store";
@@ -79,22 +80,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await prisma.command.create({
-      data: {
-        id: command.id,
-        minerId: command.minerId,
-        type: command.type,
-        status: command.status,
-        createdAt: new Date(command.createdAt),
-      },
-    });
-
+    // Persist the command row and the manual-pause flag atomically: if the flag
+    // write failed after the row committed, a SLEEP would leave automation un-frozen
+    // (or a WAKE would leave it frozen forever). $transaction commits both or neither.
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+      prisma.command.create({
+        data: {
+          id: command.id,
+          minerId: command.minerId,
+          type: command.type,
+          status: command.status,
+          createdAt: new Date(command.createdAt),
+        },
+      }),
+    ];
     if (command.type === CommandType.RESTART || command.type === CommandType.WAKE) {
-      await prisma.miner.updateMany({
-        where: { id: command.minerId },
-        data: { lastRestartAt: new Date() },
-      });
+      // A manual RESTART / WAKE resumes the miner: lift the manual-pause hold and
+      // clear any in-flight protective shutdown — a manual resume supersedes it.
+      ops.push(
+        prisma.miner.updateMany({
+          where: { id: command.minerId },
+          data: {
+            lastRestartAt: new Date(),
+            manualPauseHold: false,
+            protectiveShutdownAt: null,
+            protectiveShutdownReason: null,
+            protectiveShutdownPhase: null,
+            pendingWakeAfterPowerOn: false,
+          },
+        }),
+      );
+    } else if (command.type === CommandType.SLEEP) {
+      // A manual SLEEP is an operator pause: freeze automation for this miner until
+      // a manual WAKE / power ON (see deriveControlMode -> MANUAL_PAUSE).
+      ops.push(
+        prisma.miner.updateMany({
+          where: { id: command.minerId },
+          data: { manualPauseHold: true },
+        }),
+      );
     }
+    await prisma.$transaction(ops);
   } catch {
     const miner = minerStates.get(command.minerId);
     if (
@@ -121,10 +147,13 @@ export async function POST(request: NextRequest) {
     }
 
     commands.push(command);
-    if (command.type === CommandType.RESTART || command.type === CommandType.WAKE) {
-      const miner = minerStates.get(command.minerId);
-      if (miner) {
-        miner.lastRestartAt = new Date().toISOString();
+    const memMiner = minerStates.get(command.minerId);
+    if (memMiner) {
+      if (command.type === CommandType.RESTART || command.type === CommandType.WAKE) {
+        memMiner.lastRestartAt = new Date().toISOString();
+        memMiner.manualPauseHold = false;
+      } else if (command.type === CommandType.SLEEP) {
+        memMiner.manualPauseHold = true;
       }
     }
   }
